@@ -25,11 +25,15 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=8.2",
-    "pytest-asyncio>=0.23",
-    "pytest-cov>=5.0",
-    "ruff>=0.6",
-    "mypy>=1.10",
+    # 门禁工具**锁定已验证版本**：CI 从空环境安装，只写下限就会装到比本地更新的版本，
+    # 于是出现"本地全绿、CI 红"（ruff 新规则 / mypy 新检查 / pytest 行为变化）。
+    # 升级步骤：先本地跑全部门禁（9.3）与 `pip freeze` 对比，再同步改这里与《详细设计》0.2.3。
+    "pytest==9.1.1",
+    "pytest-asyncio==1.4.0",
+    "pytest-cov==7.1.0",
+    "coverage==7.16.2",
+    "ruff==0.16.10",
+    "mypy==2.4.0",
 ]
 # 注：`httpx` 同时是运行期依赖（OpenAI-compatible Provider 与 `MockTransport` 测试），已在 dependencies 中声明。
 
