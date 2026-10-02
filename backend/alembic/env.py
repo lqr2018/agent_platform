@@ -21,6 +21,7 @@ from alembic import context
 from app.core.config import get_settings
 from app.db import models  # noqa: F401 - 让 autogenerate 看到全部表（2.14）
 from app.db.base import Base
+from app.db.session import ensure_sqlite_directory
 
 # Phase 1 起导入模型包；后续 Phase 新增的模型只需加到 `app/db/models/__init__.py`。
 
@@ -64,6 +65,12 @@ def do_run_migrations(connection: Connection) -> None:
 
 
 async def run_async_migrations() -> None:
+    # 干净检出时 `data/` 可能还不存在（CI / 新克隆 / 空卷容器）：先补齐目录，SQLite 才建得出文件。
+    # 与 `app/db/session.py` 共用同一实现，避免"迁移能跑、应用起不来"的偏差（2.14 / 6.3）。
+    database_url = config.get_main_option("sqlalchemy.url")
+    if database_url:
+        ensure_sqlite_directory(database_url)
+
     connectable = async_engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",

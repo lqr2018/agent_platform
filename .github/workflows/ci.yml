@@ -28,6 +28,9 @@ jobs:
       - name: Install dependencies
         run: python -m pip install --upgrade pip && pip install -e ".[dev]"
 
+      - name: 记录依赖版本（排查"本地过、CI 挂"的版本漂移）
+        run: python -m pip freeze
+
       - name: ruff check
         run: ruff check .
 
@@ -40,13 +43,23 @@ jobs:
       - name: pytest（含迁移往返与文档/代码一致性测试）
         run: pytest -q --cov=app --cov-report=term-missing --cov-fail-under=70
 
-      - name: alembic 往返（7.1 DoD 第 3 条）
+      - name: 断言为干净检出（无 data/ 目录）—— 下面两步必须能自愈
+        run: |
+          rm -rf data
+          test ! -e data
+
+      - name: alembic 往返（7.1 DoD 第 3 条；干净检出无 data/ 也必须成功）
         env:
           DATABASE_URL: sqlite+aiosqlite:///./data/ci.db
         run: |
           alembic upgrade head
           alembic downgrade base
           alembic upgrade head
+
+      - name: 就绪探针（6.3：连库 + 可写 + 迁移在 head，等价 /readyz）
+        env:
+          DATABASE_URL: sqlite+aiosqlite:///./data/ci.db
+        run: python -m app.scripts.check_readyz
 
       - name: alembic check（迁移与 ORM 模型无差异，2.14）
         env:

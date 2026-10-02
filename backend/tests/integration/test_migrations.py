@@ -73,6 +73,25 @@ def test_phase1_migration_matches_models(tmp_path: Path) -> None:
     assert set(Base.metadata.tables) == PHASE1_TABLES
 
 
+def test_upgrade_creates_missing_database_directory(tmp_path: Path) -> None:
+    """干净检出场景（CI 的真实失败点）：父目录不存在时 `alembic upgrade head` 也必须成功。
+
+    `backend/data/` 不在版本库里，CI 从零 clone 后目录不存在，早期实现会直接抛
+    `unable to open database file`；现在由 `app/db/session.py::ensure_sqlite_directory()`
+    在 `alembic/env.py` 建 engine 之前补齐目录（2.14 / 6.3）。
+    """
+
+    db_path = tmp_path / "not_created_yet" / "data" / "ci.db"
+    assert not db_path.parent.exists()
+
+    command.upgrade(alembic_config_for(sqlite_url(db_path)), "head")
+
+    assert db_path.is_file()
+    with create_engine(_sync_sqlite_url(db_path)).connect() as conn:
+        tables = set(inspect(conn).get_table_names())
+    assert tables == PHASE1_TABLES | {"alembic_version"}
+
+
 def test_head_revision_matches_script_directory() -> None:
     from app.db.session import head_revision
 

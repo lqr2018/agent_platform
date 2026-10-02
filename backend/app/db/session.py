@@ -12,7 +12,8 @@ from pathlib import Path
 from alembic.config import Config as AlembicConfig
 from alembic.script import ScriptDirectory
 from sqlalchemy import text
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import ArgumentError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
 from app.core.config import Settings, get_settings
@@ -25,6 +26,30 @@ _engine_url: str | None = None
 _session_factory: async_sessionmaker[AsyncSession] | None = None
 
 
+def ensure_sqlite_directory(database_url: str) -> None:
+    """确保文件型 SQLite 的**父目录**存在（2.14 / 6.3）。
+
+    为什么需要：`DATABASE_URL` 默认指向 `./data/app.db`，而 `data/` 在 `.gitignore` 里——
+    干净检出（CI、新克隆的仓库、挂载到空卷的容器）时目录并不存在，SQLite 会直接抛
+    `unable to open database file`，迁移和启动都会失败。这里在建 engine 之前补齐目录，
+    让"配置里写了哪个路径就一定跑得起来"。
+
+    只处理文件型 SQLite：`:memory:`、URI 形式（`file:`）与非 SQLite（SD-8 不实现 PG）一律跳过。
+    """
+
+    try:
+        url = make_url(database_url)
+    except ArgumentError:  # pragma: no cover - URL 由 Settings 提供，非法值随后会在建 engine 时报错
+        return
+    if not url.drivername.startswith("sqlite"):
+        return
+    database = url.database
+    if not database or database == ":memory:" or database.startswith("file:"):
+        return
+    # SQLite 的**相对路径按进程 cwd 解析**，所以这里也用同一套规则（不 resolve，避免改变语义）
+    Path(database).expanduser().parent.mkdir(parents=True, exist_ok=True)
+
+
 def get_engine(settings: Settings | None = None) -> AsyncEngine:
     """进程内单例 engine（懒创建）。
 
@@ -33,6 +58,7 @@ def get_engine(settings: Settings | None = None) -> AsyncEngine:
     global _engine, _engine_url  # noqa: PLW0603 - 模块级单例
     config = settings or get_settings()
     if _engine is None or _engine_url != config.database_url:
+        ensure_sqlite_directory(config.database_url)
         _engine = create_async_engine(config.database_url, echo=False, future=True)
         _engine_url = config.database_url
     return _engine

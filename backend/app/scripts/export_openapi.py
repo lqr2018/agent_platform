@@ -22,6 +22,9 @@ def main() -> None:
     OUTPUT_PATH.write_text(
         json.dumps(spec, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
+        # 固定 LF：Windows 上文本模式会把 `\n` 写成 `\r\n`，而 CI 用 `git diff --exit-code`
+        # 校验"生成结果与提交版本一致"，字节不一致会误报（3.5）
+        newline="\n",
     )
     print(f"wrote {OUTPUT_PATH} ({len(spec.get('paths', {}))} paths)")  # noqa: T201
 

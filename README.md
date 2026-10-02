@@ -107,7 +107,7 @@ Phase 1（最小 Agent Runtime）：
 - [x] 前端：`/agents[/:id]`、`/models`、`/chat[/:id]`（流式渲染 + Run 状态卡）、`/traces[/:traceId]`（span 树 + 明细抽屉）
 - [x] 契约测试：3.4 事件名与 payload ↔ `core/events.py` ↔ `types/events.ts`；迁移 ↔ ORM 一致
 
-**验证情况**：后端 `pytest` 230 项（227 passed + 3 skipped）、覆盖率 92%（`runtime` 81–100%）、`ruff` / `mypy --strict` 0 告警、`alembic` 往返 + `alembic check` 通过；前端 `eslint` / `prettier` / `tsc` / `vitest`（20 项）/ `vite build` 全绿；并在**真实进程**里跑通「SSE 对话 → Run → Trace（3 span）」链路。
+**验证情况**：后端 `pytest` 236 项（233 passed + 3 skipped）、覆盖率 92%（`runtime` 81–100%）、`ruff` / `mypy --strict` 0 告警、`alembic` 往返 + `alembic check` 通过、就绪探针 `python -m app.scripts.check_readyz` 在**干净检出（无 `data/` 目录）**下通过；前端 `eslint` / `prettier` / `tsc` / `vitest`（20 项）/ `vite build` 全绿；并在**真实进程**里跑通「SSE 对话 → Run → Trace（3 span）」链路。
 
 下一步：**Phase 2 Tool Calling**（见《详细设计》7.3，M2）。
 
@@ -129,6 +129,11 @@ cd backend
 .\.venv\Scripts\ruff.exe format --check .
 .\.venv\Scripts\mypy.exe app
 .\.venv\Scripts\pytest.exe -q
+
+# 迁移与就绪探针（check_readyz 等价 GET /readyz，不需要起 HTTP 服务）
+.\.venv\Scripts\python.exe -m alembic upgrade head
+.\.venv\Scripts\python.exe -m alembic check          # 迁移与 ORM 模型无差异
+.\.venv\Scripts\python.exe -m app.scripts.check_readyz
 
 # 前端
 cd frontend
