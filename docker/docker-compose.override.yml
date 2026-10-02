@@ -1,0 +1,11 @@
+# 本地开发覆盖（详细设计 1.1）：`cd docker && docker compose up` 时自动合并。
+# 差异只有两点：后端 uvicorn --reload + 把后端源码挂进容器，改代码即时生效。
+
+services:
+  api:
+    command: ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"]
+    volumes:
+      - ../backend/data:/app/data
+      - ../backend/app:/app/app
+      - ../backend/alembic:/app/alembic
+      - ../backend/alembic.ini:/app/alembic.ini

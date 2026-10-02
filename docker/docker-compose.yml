@@ -1,0 +1,45 @@
+# 服务拓扑（详细设计 6.1）：默认**只有 api + frontend 两个服务**。
+# 不提供 PostgreSQL / Qdrant 服务定义 —— 未实现的能力不配配置项（SD-8 / SD-11 / SD-14②）。
+#
+# 用法（开发/演示一键起）：
+#   cd docker && docker compose up --build
+# 该目录下的 docker-compose.override.yml 会自动合并（本地端口/热更新）；
+# 若要跑"贴近生产"的组合，显式指定 -f 即可跳过 override：
+#   docker compose -f docker/docker-compose.yml up --build
+
+name: agent-platform
+
+services:
+  api:
+    build:
+      context: ..                      # 构建上下文 = 仓库根
+      dockerfile: backend/Dockerfile
+    environment:
+      APP_ENV: dev
+      LOG_LEVEL: INFO
+      ENABLE_DOCS: "true"
+      # DATA_DIR / DATABASE_URL 保持 Settings 默认（./data 相对 /app），无需在此重复配置
+    # 需要给平台配模型 Key 时：把 ../.env 拷成 docker/.env（compose 会自动读取并与上面合并）
+    volumes:
+      # 6.1：SQLite + chroma + 文件沙箱 + 评测报告全在一个卷里 → 一处备份
+      - ../backend/data:/app/data
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/readyz"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: frontend/Dockerfile
+    ports:
+      - "8080:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped

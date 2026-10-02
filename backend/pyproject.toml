@@ -1,0 +1,108 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-platform-backend"
+version = "0.1.0"
+description = "配置驱动的 LLM Agent 编排与执行平台 —— 后端（FastAPI + SQLite + Chroma）"
+# 不写 readme：setuptools 不允许引用项目根目录之外的文件（仓库根 README 见 ../README.md）
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+    "sqlalchemy[asyncio]>=2.0.30",
+    "aiosqlite>=0.20",
+    "alembic>=1.13",
+    "structlog>=24.1",
+    # Phase 1：`core/crypto.py` 用 Fernet 加解密 `model_providers.api_key_encrypted`（1.4 规则 1 / 附录 C）
+    "cryptography>=42",
+    # Phase 1：OpenAI-compatible Provider 与 `scripts/*` 的 HTTP 客户端（4.1.2 第 1 条：不用 OpenAI SDK）
+    "httpx>=0.27",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.2",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=5.0",
+    "ruff>=0.6",
+    "mypy>=1.10",
+]
+# 注：`httpx` 同时是运行期依赖（OpenAI-compatible Provider 与 `MockTransport` 测试），已在 dependencies 中声明。
+
+[tool.setuptools.packages.find]
+include = ["app*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = "-q -m 'not live'"
+markers = ["live: 需要真实模型/外部网络，默认排除（9.2）"]
+filterwarnings = ["ignore::DeprecationWarning:websockets.*"]
+
+[tool.coverage.run]
+source = ["app"]
+omit = ["app/scripts/*"]
+
+[tool.coverage.report]
+show_missing = true
+exclude_also = ["if TYPE_CHECKING:", "raise NotImplementedError", "@overload"]
+
+# ---- lint / format（9.3：ruff 0 error） ----
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "N", "UP", "B", "A", "C4", "DTZ", "T10", "T20", "PT", "SIM", "RET", "RUF", "PTH", "PL"]
+ignore = [
+    "PLR0913",   # 参数个数（DTO / 工厂函数天然多参）
+    "PLR0917",   # 位置参数个数（路由函数把依赖放在前面，其余过滤条件已是关键字参数）
+    "PLR2004",   # 测试与协议值里的魔法值
+    "PLR0915",   # 语句数（create_app / lifespan）
+    "PLR0912",   # 分支数
+    "TRY003",    # 异常消息格式
+    "EM101", "EM102",  # 异常消息用字面量
+    "N818",      # 异常类名后缀（AppError 系用语义名，见 1.6）
+    # 全角标点（RUF001/002/003）：本项目注释与文档统一用中文标点，属有意为之
+    "RUF001", "RUF002", "RUF003",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "T20", "PLR0911", "SLF001", "PLC0415", "PT011", "PT018"]
+# core/logging.py 的处理器里对 runtime 的 import 是**故意延迟**的（避免 core → runtime 反向依赖，1.2）
+"app/core/logging.py" = ["PLC0415"]
+"alembic/env.py" = ["INP001", "PLC0415"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["app"]
+
+[tool.ruff.format]
+docstring-code-format = true
+
+# ---- 类型检查（9.3：app/runtime 与 app/core 严格通过；app/api 可放宽，1.3） ----
+[tool.mypy]
+python_version = "3.11"
+plugins = ["pydantic.mypy"]
+warn_unused_configs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+no_implicit_optional = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+strict_equality = true
+show_error_codes = true
+exclude = ["^\\.venv/", "^alembic/versions/"]
+
+[[tool.mypy.overrides]]
+module = ["app.core.*", "app.runtime.*"]
+strict = true
+
+[[tool.mypy.overrides]]
+module = ["app.api.*", "app.main"]
+disallow_untyped_decorators = false

@@ -1,0 +1,5 @@
+dist
+node_modules
+package-lock.json
+# 由 `npm run gen:api` 生成的产物，禁止手改，也不参与 prettier 格式化
+src/types/api.d.ts
