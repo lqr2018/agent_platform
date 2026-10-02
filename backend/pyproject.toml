@@ -42,6 +42,11 @@ include = ["app*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# `pythonpath` 必须含 `.`（相对 rootdir=backend/）：CI 用**控制台脚本** `pytest` 调用，
+# 它不会把 CWD 加进 `sys.path`；而 `python -m pytest` 会加。缺这项时集成测试的
+# `from tests.helpers import ...` 在 CI 上 ModuleNotFoundError → 收集期 9 个 error
+# → pytest 退出码 2（2026-10-02 的真实事故，见《详细设计》附录 F v1.8）。
+pythonpath = ["."]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 addopts = "-q -m 'not live'"
