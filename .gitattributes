@@ -1,0 +1,3 @@
+# 换行符归一化（详细设计 6.4）：CI 在 Linux 上执行 shell 脚本，
+# 若 `.sh` 带 CRLF 会报 `\r': command not found`，这里强制入库与检出都用 LF。
+*.sh text eol=lf
