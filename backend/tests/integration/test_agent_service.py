@@ -11,7 +11,8 @@ import pytest_asyncio
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import AgentInvalidConfigError, AgentNotFoundError, ConflictError
-from app.db.models import ModelProvider
+from app.db.models import ModelProvider, Tool
+from app.runtime.tools.registry import builtin_tool_id
 from app.schemas.agent import AgentCloneRequest, AgentCreate, AgentUpdate
 from app.services import agent_service
 from tests.helpers import create_fake_provider
@@ -69,10 +70,35 @@ async def test_create_rejects_unknown_provider_and_model(session: AsyncSession, 
 
 
 @pytest.mark.asyncio
-async def test_create_rejects_phase1_references(session: AsyncSession, provider: ModelProvider) -> None:
+async def test_create_validates_tool_references(session: AsyncSession, provider: ModelProvider) -> None:
+    """Phase 2：`tool_ids` 必须存在且 enabled（4.2.2）；KB / Workflow 引用仍被拒（SD-14②）。"""
     with pytest.raises(AgentInvalidConfigError) as excinfo:
         await agent_service.create_agent(session, _payload(provider, tool_ids=["01J8Z0000000000000000000T1"]))
-    assert excinfo.value.details["fields"] == {"tool_ids": "TOOLS_NOT_AVAILABLE_IN_PHASE_1"}
+    assert excinfo.value.details == {"field": "tool_ids", "unknown": ["01J8Z0000000000000000000T1"]}
+
+    disabled = await session.get(Tool, builtin_tool_id("web_search"))
+    assert disabled is not None
+    disabled.status = "disabled"
+    await session.commit()
+    with pytest.raises(AgentInvalidConfigError) as disabled_error:
+        await agent_service.create_agent(
+            session, _payload(provider, name="disabled-agent", tool_ids=[builtin_tool_id("web_search")])
+        )
+    assert disabled_error.value.details == {
+        "field": "tool_ids",
+        "disabled": [builtin_tool_id("web_search")],
+    }
+
+    with pytest.raises(AgentInvalidConfigError) as wf_error:
+        await agent_service.create_agent(
+            session, _payload(provider, name="wf-agent", workflow_id="01J8Z00000000000000000W1")
+        )
+    assert "workflow_id" in wf_error.value.details["fields"]
+
+    created = await agent_service.create_agent(
+        session, _payload(provider, name="tool-agent", tool_ids=[builtin_tool_id("calculator")])
+    )
+    assert list(created.tool_ids) == [builtin_tool_id("calculator")]
 
 
 @pytest.mark.asyncio

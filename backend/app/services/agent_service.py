@@ -3,8 +3,9 @@
 - 软删除：`deleted_at`（2.2：仅 `agents` / `knowledge_bases` 用软删除）；
 - `system_prompt` 变化 → 先把**旧值**落 `agent_prompt_versions`（`version = 当前值`），
   再更新 `agents` 并把 `prompt_version += 1`（2.4 的写入约定）；
-- Phase 1 的引用校验：`tool_ids` / `knowledge_base_ids` / `workflow_id` 必须为空
-  （对应能力在 Phase 2 / Phase 5 / Phase 3 落地，SD-14②：不为未实现的能力留入口）。
+- Phase 2 的引用校验：`tool_ids` 必须指向**存在且 enabled** 的工具（4.2.2）；
+  `knowledge_base_ids` / `workflow_id` 仍必须为空（对应能力分别在 Phase 5 / Phase 3 落地，
+  SD-14②：不为未实现的能力留入口）。
 """
 
 from __future__ import annotations
@@ -16,17 +17,17 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.errors import AgentInvalidConfigError, AgentNotFoundError, ConflictError
-from app.db.models import Agent, AgentPromptVersion, ModelProvider
+from app.db.models import Agent, AgentPromptVersion, ModelProvider, Tool
 from app.db.models.agent import AGENT_STATUS_ENABLED, default_memory_config
+from app.db.models.tool import TOOL_STATUS_ENABLED
 from app.runtime.agent.state import AgentSpec
 from app.schemas.agent import AgentCloneRequest, AgentCreate, AgentUpdate
 
-PHASE1_UNSUPPORTED_FIELDS = {
-    "tool_ids": "TOOLS_NOT_AVAILABLE_IN_PHASE_1",
+UNSUPPORTED_FIELDS = {
     "knowledge_base_ids": "KNOWLEDGE_BASES_NOT_AVAILABLE_IN_PHASE_5",
     "workflow_id": "WORKFLOWS_NOT_AVAILABLE_IN_PHASE_3",
 }
-"""Phase 1 不允许的引用字段 → `AGENT_INVALID_CONFIG.details.reason`（供前端提示）。"""
+"""本 build 不允许的引用字段 → `AGENT_INVALID_CONFIG.details.reason`（供前端提示）。"""
 
 
 async def get_agent(session: AsyncSession, agent_id: str, *, include_deleted: bool = False) -> Agent:
@@ -59,10 +60,9 @@ async def list_agents(
 
 async def create_agent(session: AsyncSession, data: AgentCreate) -> Agent:
     """新建 Agent（校验引用与白名单，3.2.2 / 3.3.1）。"""
-    _reject_phase1_fields(
-        tool_ids=data.tool_ids, knowledge_base_ids=data.knowledge_base_ids, workflow_id=data.workflow_id
-    )
+    _reject_unsupported_fields(knowledge_base_ids=data.knowledge_base_ids, workflow_id=data.workflow_id)
     await _validate_model(session, provider_id=data.model_provider_id, model_name=data.model_name)
+    await _validate_tools(session, data.tool_ids)
     await _ensure_name_available(session, data.name)
 
     agent = Agent(
@@ -218,21 +218,40 @@ async def _ensure_name_available(session: AsyncSession, name: str) -> None:
         raise ConflictError(f"Agent name '{name}' already exists", details={"name": name})
 
 
-def _reject_phase1_fields(
-    *, tool_ids: Sequence[str], knowledge_base_ids: Sequence[str], workflow_id: str | None
-) -> None:
-    """Phase 1 不接受工具 / 知识库 / Workflow 引用（SD-14②）。"""
+def _reject_unsupported_fields(*, knowledge_base_ids: Sequence[str], workflow_id: str | None) -> None:
+    """不接受知识库 / Workflow 引用（SD-14②：对应能力分别在 Phase 5 / Phase 3 落地）。"""
     offenders = {
         field: reason
         for field, value, reason in (
-            ("tool_ids", tool_ids, PHASE1_UNSUPPORTED_FIELDS["tool_ids"]),
-            ("knowledge_base_ids", knowledge_base_ids, PHASE1_UNSUPPORTED_FIELDS["knowledge_base_ids"]),
-            ("workflow_id", workflow_id, PHASE1_UNSUPPORTED_FIELDS["workflow_id"]),
+            ("knowledge_base_ids", knowledge_base_ids, UNSUPPORTED_FIELDS["knowledge_base_ids"]),
+            ("workflow_id", workflow_id, UNSUPPORTED_FIELDS["workflow_id"]),
         )
         if value
     }
     if offenders:
         raise AgentInvalidConfigError(
-            "This build only supports plain chat agents (tools / knowledge bases / workflows are not implemented yet)",
+            "This build does not support knowledge bases / workflows yet (Phase 3 / Phase 5)",
             details={"reason": "PHASE_NOT_SUPPORTED", "fields": offenders},
+        )
+
+
+async def _validate_tools(session: AsyncSession, tool_ids: Sequence[str]) -> None:
+    """Phase 2：`tool_ids` 必须指向**存在且 enabled** 的工具（2.4 / 4.2.2）。
+
+    被禁用 / 不存在的工具在 Agent 创建期就拒绝，避免运行期"sandbox 里永远拿不到工具"的隐性失败。
+    """
+    if not tool_ids:
+        return
+    rows = (await session.execute(select(Tool).where(Tool.id.in_(tuple(tool_ids))))).scalars().all()
+    by_id = {row.id: row for row in rows}
+    unknown = [tool_id for tool_id in tool_ids if tool_id not in by_id]
+    if unknown:
+        raise AgentInvalidConfigError(
+            f"Unknown tool(s): {', '.join(unknown)}", details={"field": "tool_ids", "unknown": unknown}
+        )
+    disabled = [tool_id for tool_id in tool_ids if by_id[tool_id].status != TOOL_STATUS_ENABLED]
+    if disabled:
+        raise AgentInvalidConfigError(
+            f"Tool(s) are disabled: {', '.join(disabled)}",
+            details={"field": "tool_ids", "disabled": disabled},
         )

@@ -53,12 +53,14 @@ class MemoryStub:
         latency_ms: int,
         model_name: str,
         error_code: str | None = None,
+        tool_calls: tuple[ToolCallSpec, ...] = (),
     ) -> None:
         self.completed[message_id] = {
             "content": content,
             "finish_reason": finish_reason,
             "usage": usage,
             "model_name": model_name,
+            "tool_calls": tool_calls,
         }
 
 
@@ -141,7 +143,7 @@ def _fake_provider() -> FakeLLMProvider:
 
 
 @pytest.mark.asyncio
-async def test_run_emits_phase1_events_and_records_spans() -> None:
+async def test_run_emits_step_events_and_records_spans() -> None:
     memory, sink = MemoryStub(), SinkStub()
     runtime, tracer = _runtime(_fake_provider(), memory, sink)
     emitter = ListEmitter()
@@ -155,12 +157,15 @@ async def test_run_emits_phase1_events_and_records_spans() -> None:
     assert result.steps == 1 and result.usage.total_tokens == 15
     assert result.message_id == "msg-1"
 
-    # 7.2 任务 6：Phase 1 只发 1/3/4/5/16/17 号事件
+    # 7.3：Phase 2 起每步发 agent.step.started（3.4 事件 2）与 agent.step.completed（事件 15）
     names = emitter.names()
-    assert names[0] == str(SseEventType.MESSAGE_STARTED)
+    assert names[0] == str(SseEventType.AGENT_STEP_STARTED)
+    assert names[1] == str(SseEventType.MESSAGE_STARTED)
     assert str(SseEventType.MESSAGE_COMPLETED) in names
     assert str(SseEventType.USAGE_UPDATED) in names
-    assert str(SseEventType.AGENT_STEP_STARTED) not in names  # 阶段 2 的事件不发
+    assert names[-1] == str(SseEventType.AGENT_STEP_COMPLETED)
+    assert emitter.payload_for(SseEventType.AGENT_STEP_COMPLETED) == {"step_index": 1, "has_tool_calls": False}
+    assert str(SseEventType.TOOL_CALL_STARTED) not in names  # 无工具 Agent 不产生 tool 事件
 
     # span 是"结束时写库"，所以子 span 先于父 span 落盘（4.8.2）；顺序按 `seq` 才是 run→agent→llm
     assert [span.span_type for span in sink.spans] == [SpanType.LLM, SpanType.AGENT, SpanType.RUN]
@@ -208,8 +213,8 @@ async def test_run_timeout_is_reported_as_run_timeout() -> None:
 
 
 @pytest.mark.asyncio
-async def test_tool_calls_are_rejected_in_phase1() -> None:
-    """4.4.3 的 tool 分支属 Phase 2：本阶段显式拒绝（不静默忽略）。"""
+async def test_tool_calls_are_rejected_without_a_toolkit() -> None:
+    """未注入 `ToolKit` 的 Runtime（Workflow / 脚本场景）遇到 tool_calls 仍显式失败，不静默忽略。"""
     call = ToolCallSpec(id="call_1", name="calculator", arguments={"expression": "1+1"})
     memory, sink = MemoryStub(), SinkStub()
     runtime, tracer = _runtime(StubLLM([_result(calls=(call,))]), memory, sink)

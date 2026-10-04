@@ -17,6 +17,7 @@ from app.core.errors import AppError
 from app.runtime.llm.base import ChatMessage
 from app.runtime.llm.usage import ZERO_USAGE, TokenUsage
 from app.runtime.observability.tracer import utcnow
+from app.runtime.tools.base import ToolDefinition
 
 DEFAULT_MAX_STEPS = 8
 DEFAULT_TIMEOUT_SECONDS = 180
@@ -63,8 +64,13 @@ class AgentState:
     cost_usd: Decimal = Decimal(0)
     message_id: str | None = None
     """最后一次 assistant 消息的行 id（供 `runs.output.message_id` 与 `RunResult`）。"""
+    tool_definitions: list[ToolDefinition] = field(default_factory=list)
+    """本步骤**可见**的工具定义（4.2.2：每一步重新计算，`tool_ids` 顺序即下发顺序）。"""
     tool_call_count: int = 0
+    calls_per_tool: dict[str, int] = field(default_factory=dict)
+    """本 Run 内每个工具的已调用次数（4.2.3 步骤 5 的次数闸门，跨 step 累积）。"""
     recent_tool_failures: dict[str, int] = field(default_factory=dict)
+    """同一工具**连续**失败次数（4.4.3：达 3 次 → `TOOL_REPEATED_FAILURE`）。"""
     finish_reason: str | None = None
     error: AppError | None = None
     started_at: datetime = field(default_factory=utcnow)

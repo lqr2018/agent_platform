@@ -272,6 +272,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/tool-invocations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 工具调用明细（?run_id=&tool_id=）
+         * @description 2.5：Trace 之外仍可 SQL 查询的审计行；最新在前。
+         */
+        get: operations["list_tool_invocations_api_v1_tool_invocations_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/tools": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 工具列表（?tool_type=&status=&q=）
+         * @description 3.2.3：内置在前、按名称排序；`?status=` 用 `Query(alias=...)` 暴露（同 `traces.py` 的 `from`/`to`）。
+         */
+        get: operations["list_tools_api_v1_tools_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/tools/{tool_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 工具详情（含 http_config）
+         * @description 不存在 → `TOOL_NOT_FOUND`（404）。
+         */
+        get: operations["get_tool_api_v1_tools__tool_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/traces": {
         parameters: {
             query?: never;
@@ -565,6 +625,11 @@ export interface components {
             data: components["schemas"]["SpanRead"];
             meta: components["schemas"]["ResponseMeta"];
         };
+        /** ApiResponse[ToolDetail] */
+        ApiResponse_ToolDetail_: {
+            data: components["schemas"]["ToolDetail"];
+            meta: components["schemas"]["ResponseMeta"];
+        };
         /** ApiResponse[TraceDetail] */
         ApiResponse_TraceDetail_: {
             data: components["schemas"]["TraceDetail"];
@@ -604,6 +669,18 @@ export interface components {
         ApiResponse_list_RunRead__: {
             /** Data */
             data: components["schemas"]["RunRead"][];
+            meta: components["schemas"]["ResponseMeta"];
+        };
+        /** ApiResponse[list[ToolInvocationRead]] */
+        ApiResponse_list_ToolInvocationRead__: {
+            /** Data */
+            data: components["schemas"]["ToolInvocationRead"][];
+            meta: components["schemas"]["ResponseMeta"];
+        };
+        /** ApiResponse[list[ToolRead]] */
+        ApiResponse_list_ToolRead__: {
+            /** Data */
+            data: components["schemas"]["ToolRead"][];
             meta: components["schemas"]["ResponseMeta"];
         };
         /** ApiResponse[list[TraceRead]] */
@@ -1268,6 +1345,197 @@ export interface components {
             status: string;
             /** Trace Id */
             trace_id: string;
+        };
+        /**
+         * ToolDetail
+         * @description 工具详情：附加 `api` 类型的 `http_config`（2.5）。
+         */
+        ToolDetail: {
+            /** Builtin Name */
+            builtin_name?: string | null;
+            /** Created At */
+            created_at: string;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /**
+             * Display Name
+             * @default
+             */
+            display_name: string;
+            /** Http Config */
+            http_config?: {
+                [key: string]: unknown;
+            };
+            /** Id */
+            id: string;
+            /** Input Schema */
+            input_schema?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Is System
+             * @default false
+             */
+            is_system: boolean;
+            /** Name */
+            name: string;
+            /** Output Schema */
+            output_schema?: {
+                [key: string]: unknown;
+            };
+            /** Permission Config */
+            permission_config?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Status
+             * @default enabled
+             */
+            status: string;
+            /** Tags */
+            tags?: string[];
+            /**
+             * Tool Type
+             * @default builtin
+             */
+            tool_type: string;
+            /** Updated At */
+            updated_at: string;
+        };
+        /**
+         * ToolInvocationRead
+         * @description `tool_invocations` 行（2.5）：每次调用的结构化明细（审计 / 前端工具卡片）。
+         */
+        ToolInvocationRead: {
+            /** Approval Id */
+            approval_id?: string | null;
+            /** Arguments */
+            arguments?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Attempt
+             * @default 1
+             */
+            attempt: number;
+            /**
+             * Call Index
+             * @default 0
+             */
+            call_index: number;
+            /** Created At */
+            created_at: string;
+            /** Error Code */
+            error_code?: string | null;
+            /** Error Message */
+            error_message?: string | null;
+            /** Id */
+            id: string;
+            /**
+             * Latency Ms
+             * @default 0
+             */
+            latency_ms: number;
+            /** Normalized Arguments */
+            normalized_arguments?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Permission Decision
+             * @default allow
+             */
+            permission_decision: string;
+            /** Result */
+            result?: string | null;
+            /**
+             * Result Truncated
+             * @default false
+             */
+            result_truncated: boolean;
+            /** Run Id */
+            run_id: string;
+            /**
+             * Span Id
+             * @default
+             */
+            span_id: string;
+            /**
+             * Status
+             * @default succeeded
+             */
+            status: string;
+            /**
+             * Step Index
+             * @default 0
+             */
+            step_index: number;
+            /** Tool Id */
+            tool_id?: string | null;
+            /** Tool Name */
+            tool_name: string;
+            /**
+             * Trace Id
+             * @default
+             */
+            trace_id: string;
+        };
+        /**
+         * ToolRead
+         * @description `tools` 行（2.5，前端工具管理页与 Chat 工具卡片的展示字段）。
+         */
+        ToolRead: {
+            /** Builtin Name */
+            builtin_name?: string | null;
+            /** Created At */
+            created_at: string;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /**
+             * Display Name
+             * @default
+             */
+            display_name: string;
+            /** Id */
+            id: string;
+            /** Input Schema */
+            input_schema?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Is System
+             * @default false
+             */
+            is_system: boolean;
+            /** Name */
+            name: string;
+            /** Output Schema */
+            output_schema?: {
+                [key: string]: unknown;
+            };
+            /** Permission Config */
+            permission_config?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Status
+             * @default enabled
+             */
+            status: string;
+            /** Tags */
+            tags?: string[];
+            /**
+             * Tool Type
+             * @default builtin
+             */
+            tool_type: string;
+            /** Updated At */
+            updated_at: string;
         };
         /**
          * TraceDetail
@@ -2138,6 +2406,105 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiResponse_SpanRead_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_tool_invocations_api_v1_tool_invocations_get: {
+        parameters: {
+            query?: {
+                run_id?: string | null;
+                tool_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_list_ToolInvocationRead__"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_tools_api_v1_tools_get: {
+        parameters: {
+            query?: {
+                /** @description `builtin` / `api` */
+                tool_type?: string | null;
+                /** @description `enabled` / `disabled` */
+                status?: string | null;
+                /** @description 按 name / display_name 模糊匹配 */
+                q?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_list_ToolRead__"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_tool_api_v1_tools__tool_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tool_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_ToolDetail_"];
                 };
             };
             /** @description Validation Error */

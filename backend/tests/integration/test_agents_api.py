@@ -8,7 +8,8 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import AgentPromptVersion
+from app.db.models import AgentPromptVersion, Tool
+from app.runtime.tools.registry import builtin_tool_id
 from tests.helpers import create_fake_provider
 
 AGENT_BODY = {
@@ -117,14 +118,39 @@ async def test_validation_rejects_unknown_provider_and_model(app_client: AsyncCl
 
 
 @pytest.mark.asyncio
-async def test_phase1_rejects_tools_and_workflows(app_client: AsyncClient, provider_id: str) -> None:
-    """SD-14②：Phase 1 没有工具 / KB / Workflow，Agent 也不能引用（明细给前端提示）。"""
-    with_tools = await app_client.post(
+async def test_reference_validation_for_tools_and_workflows(
+    app_client: AsyncClient, provider_id: str, db_session: AsyncSession
+) -> None:
+    """3.2.2 / Phase 2：`tool_ids` 必须指向 enabled 的工具；KB / Workflow 仍未实现（SD-14②）。"""
+    unknown_id = "01J8Z0000000000000000000T1"
+    unknown = await app_client.post(
         "/api/v1/agents",
-        json={**AGENT_BODY, "model_provider_id": provider_id, "tool_ids": ["01J8Z0000000000000000000T1"]},
+        json={**AGENT_BODY, "model_provider_id": provider_id, "tool_ids": [unknown_id]},
     )
-    assert with_tools.status_code == 422
-    assert with_tools.json()["error"]["details"]["fields"] == {"tool_ids": "TOOLS_NOT_AVAILABLE_IN_PHASE_1"}
+    assert unknown.status_code == 422
+    assert unknown.json()["error"]["details"] == {"field": "tool_ids", "unknown": [unknown_id]}
+
+    disabled_row = await db_session.get(Tool, builtin_tool_id("web_search"))
+    assert disabled_row is not None
+    disabled_row.status = "disabled"
+    await db_session.commit()
+    disabled = await app_client.post(
+        "/api/v1/agents",
+        json={
+            **AGENT_BODY,
+            "name": "disabled-tool-agent",
+            "model_provider_id": provider_id,
+            "tool_ids": [builtin_tool_id("web_search")],
+        },
+    )
+    assert disabled.status_code == 422
+    assert disabled.json()["error"]["details"] == {
+        "field": "tool_ids",
+        "disabled": [builtin_tool_id("web_search")],
+    }
+
+    created = await _create(app_client, provider_id, name="tool-agent", tool_ids=[builtin_tool_id("calculator")])
+    assert created["tool_ids"] == [builtin_tool_id("calculator")]
 
     wf_body = {
         **AGENT_BODY,

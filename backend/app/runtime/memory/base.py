@@ -6,7 +6,7 @@ runtime 不碰 ORM：历史消息通过 `MessageSource` 协议由服务层实现
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Protocol
 
@@ -47,7 +47,12 @@ class MessageSource(Protocol):
 
 
 class ShortTermMemory(Protocol):
-    """4.3.1 的接口（含 Phase 1 的三处签名细化，详见文档 4.3.1 的说明块）。"""
+    """4.3.1 的接口（含 Phase 1 的三处签名细化，详见文档 4.3.1 的说明块）。
+
+    `complete()` 的 `tool_calls` 是 Phase 2 的补充：assistant 行的占位行在 LLM 返回后才
+    知道 `tool_calls`，必须回填 `messages.tool_calls` 才能在下一轮（或回放时）还原
+    `assistant(tool_calls) → tool` 交替（4.4.3 / 2.6）。
+    """
 
     async def build(
         self,
@@ -69,6 +74,7 @@ class ShortTermMemory(Protocol):
         latency_ms: int,
         model_name: str,
         error_code: str | None = None,
+        tool_calls: Sequence[ToolCallSpec] = (),
     ) -> None: ...
 
 

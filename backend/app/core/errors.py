@@ -51,6 +51,17 @@ class ErrorCode(StrEnum):
     RUN_CANCELED = "RUN_CANCELED"
     RUN_TIMEOUT = "RUN_TIMEOUT"
 
+    # ---- 工具（2.5 / 4.2.3，Phase 2） ----
+    TOOL_NOT_FOUND = "TOOL_NOT_FOUND"
+    TOOL_DISABLED = "TOOL_DISABLED"
+    TOOL_INVALID_ARGUMENTS = "TOOL_INVALID_ARGUMENTS"
+    TOOL_PERMISSION_DENIED = "TOOL_PERMISSION_DENIED"
+    TOOL_SANDBOX_VIOLATION = "TOOL_SANDBOX_VIOLATION"
+    TOOL_TIMEOUT = "TOOL_TIMEOUT"
+    TOOL_EXECUTION_FAILED = "TOOL_EXECUTION_FAILED"
+    TOOL_OUTPUT_TOO_LARGE = "TOOL_OUTPUT_TOO_LARGE"
+    TOOL_REPEATED_FAILURE = "TOOL_REPEATED_FAILURE"
+
 
 class AppError(Exception):
     """所有可预期错误的基类（1.6）。
@@ -253,6 +264,74 @@ class RunTimeoutError(AppError):
     code = ErrorCode.RUN_TIMEOUT
     http_status = 500
     message = "Run exceeded the configured timeout"
+
+
+# ---- Phase 2：工具（2.5 / 4.2.3） ----
+class ToolNotFoundError(NotFoundError):
+    """工具不存在（404，4.2.3 步骤 1）。"""
+
+    code = ErrorCode.TOOL_NOT_FOUND
+    message = "Tool not found"
+
+
+class ToolDisabledError(ConflictError):
+    """工具被禁用 / 无外部 Key 而不可用（409，2.5）。"""
+
+    code = ErrorCode.TOOL_DISABLED
+    message = "Tool is disabled"
+
+
+class ToolInvalidArgumentsError(ValidationError):
+    """JSON Schema 校验失败（422，4.2.3 步骤 3；错误回填给 LLM，不中断 Run）。"""
+
+    code = ErrorCode.TOOL_INVALID_ARGUMENTS
+    message = "Tool arguments failed schema validation"
+
+
+class ToolPermissionDeniedError(AppError):
+    """权限不足 / 需审批但未开启 / 超次数（403，4.2.3 步骤 4/5，SD-17）。"""
+
+    code = ErrorCode.TOOL_PERMISSION_DENIED
+    http_status = 403
+    message = "Tool call was denied by policy"
+
+
+class ToolSandboxViolationError(AppError):
+    """路径穿越 / 内网 / 非白名单 host（403，4.2.4）。"""
+
+    code = ErrorCode.TOOL_SANDBOX_VIOLATION
+    http_status = 403
+    message = "Tool call violated sandbox rules"
+
+
+class ToolTimeoutError(AppError):
+    """工具执行超时（504，4.2.3 步骤 6）。"""
+
+    code = ErrorCode.TOOL_TIMEOUT
+    http_status = 504
+    message = "Tool execution timed out"
+
+
+class ToolExecutionFailedError(AppError):
+    """工具内部异常（500；作为错误结果回填给 LLM，不中断 Run，4.2.3 步骤 7）。"""
+
+    code = ErrorCode.TOOL_EXECUTION_FAILED
+    message = "Tool execution failed"
+
+
+class ToolOutputTooLargeError(AppError):
+    """输出被截断（附录 A：HTTP 200 —— 属"正常结果 + `truncated` 标记"，不是失败）。"""
+
+    code = ErrorCode.TOOL_OUTPUT_TOO_LARGE
+    http_status = 200
+    message = "Tool output was truncated"
+
+
+class ToolRepeatedFailureError(AppError):
+    """同一工具连续失败 3 次 → Run 失败（4.2.3 的错误处理原则）。"""
+
+    code = ErrorCode.TOOL_REPEATED_FAILURE
+    message = "The same tool failed repeatedly"
 
 
 HTTP_STATUS_TO_CODE: Mapping[int, ErrorCode] = {

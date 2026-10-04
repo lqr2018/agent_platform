@@ -10,6 +10,7 @@ from __future__ import annotations
 from app.db.models.agent import Agent, AgentPromptVersion
 from app.db.models.conversation import Conversation, Message, Run
 from app.db.models.llm import ModelProvider
+from app.db.models.tool import Tool, ToolInvocation
 from app.db.models.trace import Span, Trace
 
 __all__ = [
@@ -20,5 +21,7 @@ __all__ = [
     "ModelProvider",
     "Run",
     "Span",
+    "Tool",
+    "ToolInvocation",
     "Trace",
 ]

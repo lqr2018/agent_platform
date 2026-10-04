@@ -9,7 +9,7 @@
 | 时长超 `agent.timeout_seconds` | `failed` / `RUN_TIMEOUT` |
 | 用户取消 | `canceled` / `RUN_CANCELED` |
 | LLM 错误且重试耗尽 | `failed` / `MODEL_*`（由 Provider 抛出） |
-| 同一工具连续失败 3 次 | `failed` / `TOOL_REPEATED_FAILURE`（Phase 2 用） |
+| 同一工具连续失败 3 次 | `failed` / `TOOL_REPEATED_FAILURE`（Phase 2 生效） |
 """
 
 from __future__ import annotations
@@ -25,6 +25,7 @@ from app.core.errors import (
     ModelMaxStepsExceededError,
     RunCanceledError,
     RunTimeoutError,
+    ToolRepeatedFailureError,
 )
 
 MAX_CONSECUTIVE_TOOL_FAILURES = 3
@@ -40,13 +41,14 @@ class CancelSignal(Protocol):
 class StopReason(StrEnum):
     """导致循环结束的原因（映射到 `runs.status` + `error_code`）。
 
-    Phase 2 接入工具后在此追加 `REPEATED_TOOL_FAILURE`（`TOOL_REPEATED_FAILURE` 属附录 A 的阶段 2，
-    按 SD-14② 不在 Phase 1 登记错误码）。
+    `REPEATED_TOOL_FAILURE` 是 Phase 2 的补充取值（4.4.3：同一工具连续失败 3 次），
+    由 `AgentRuntime` 在工具分支判定后直接用 `error_for()` 抛出。
     """
 
     CANCELED = "canceled"
     TIMEOUT = "timeout"
     MAX_STEPS = "max_steps"
+    REPEATED_TOOL_FAILURE = "repeated_tool_failure"
 
 
 def exceeded_max_steps(step_index: int, max_steps: int) -> bool:
@@ -94,4 +96,9 @@ def error_for(reason: StopReason) -> AppError:
         return RunCanceledError()
     if reason is StopReason.TIMEOUT:
         return RunTimeoutError()
+    if reason is StopReason.REPEATED_TOOL_FAILURE:
+        return ToolRepeatedFailureError(
+            f"A tool failed {MAX_CONSECUTIVE_TOOL_FAILURES} times in a row",
+            details={"max_consecutive_failures": MAX_CONSECUTIVE_TOOL_FAILURES},
+        )
     return ModelMaxStepsExceededError()

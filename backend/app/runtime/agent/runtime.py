@@ -1,26 +1,33 @@
-"""Agent Runtime：平台的核心循环（详细设计 4.4）。
+"""Agent Runtime：平台的核心循环（详细设计 4.4 / 7.3）。
 
-Phase 1 范围（7.2 任务 4）：**无工具分支**的主循环
+Phase 2 范围（7.3 任务 6）：**含工具分支**的主循环
 
 ```text
 while step_index < agent.max_steps:
-    step_index += 1
-    message_id = memory.append(assistant 占位行)      # 稳定 id，供 message.started/delta
+    step_index += 1; emit(agent.step.started)
+    tools = visible_tools()                              # 4.2.2：每一步重新计算
+    message_id = memory.append(assistant 占位行)          # 稳定 id，供 message.started/delta
     emit(message.started)
-    result = llm.chat(messages, stream=..., on_delta=...)   # 落 llm span（4.8.1）
-    累加 usage; emit(usage.updated) / emit(message.completed)
-    if finish_reason == "tool_calls": → Phase 2（本阶段显式拒绝）
-    否则 → succeeded
+    result = llm.chat(messages, tools=tools, stream=..., on_delta=...)   # 落 llm span（4.8.1）
+    累加 usage; memory.complete(..., tool_calls=...); emit(message.completed)
+    if result.message.tool_calls:
+        for call in result.message.tool_calls:            # 顺序执行（SD-2：不实现并行）
+            inv = tool_executor.execute(call)             # 被拒/失败都作为结果回填，不挂起（SD-17）
+            memory.append(tool(inv))                      # role=tool 消息落库（7.3 任务 6）
+        emit(agent.step.completed, has_tool_calls=true); continue
+    emit(agent.step.completed, has_tool_calls=false); succeeded
 ```
 
-`emit` 与 `cancel` 都是注入的（4.4.1），因此同一个 Runtime 既服务 HTTP/SSE，
-也能被 WorkflowEngine / EvalRunner / `scripts/evaluate.py` 复用（不依赖 Web 框架，1.2）。
+`emit` 与 `cancel` 都是注入的（4.4.1），工具执行器同样由服务层装配后注入（`ToolKit`）——
+因此 runtime 既不依赖 Web 框架，也不 import `db` / `services`（1.2）：`tools` 行由服务层
+在 `ToolKit.load_definitions` 里按步重查，`tool_invocations` 由注入的 `ToolInvocationSink` 落库。
 """
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
+from dataclasses import dataclass
 from time import perf_counter
 
 from app.core.config import Settings
@@ -32,6 +39,8 @@ from app.core.errors import (
     RunCanceledError,
 )
 from app.core.events import (
+    AgentStepCompletedPayload,
+    AgentStepStartedPayload,
     MessageCompletedPayload,
     MessageDeltaPayload,
     MessageStartedPayload,
@@ -42,15 +51,41 @@ from app.core.logging import get_logger
 from app.runtime.agent.context import assemble_context
 from app.runtime.agent.emitter import EventEmitter, NullEmitter
 from app.runtime.agent.state import AgentSpec, AgentState, RunResult
-from app.runtime.agent.stop import StopReason, error_for, evaluate
-from app.runtime.llm.base import ChatMessage, LLMProvider, LLMResult
+from app.runtime.agent.stop import StopReason, error_for, evaluate, repeated_tool_failure
+from app.runtime.llm.base import ChatMessage, LLMProvider, LLMResult, ToolCallSpec
 from app.runtime.memory.base import ShortTermMemory
 from app.runtime.observability.tracer import Span, Tracer, utcnow
+from app.runtime.tools.base import (
+    ToolDefinition,
+    ToolInvocationResult,
+    ToolPermissionConfig,
+)
+from app.runtime.tools.executor import ToolExecutor, ToolRunContext
+from app.runtime.tools.registry import ToolRegistry
 
 logger = get_logger(__name__)
 
 MAX_SPAN_OUTPUT_CHARS = 2_000
 """span 里留存的文本上限（4.8.2 还会按 `TRACE_MAX_PAYLOAD_BYTES` 再截一次）。"""
+
+DefinitionsLoader = Callable[[], Awaitable[Sequence[ToolDefinition]]]
+"""按步加载工具定义（服务层实现：查 `tools` 表 → `ToolDefinition` 快照）。"""
+
+
+@dataclass(frozen=True, slots=True)
+class ToolKit:
+    """一次 Run 的工具装配（4.2.2 可见性 + 4.2.3 执行）。
+
+    - `registry`：内置工具实现（4.2.3 步骤 6 的 `builtin` 分派点）；
+    - `executor`：九步流水线（含注入的 `ToolInvocationSink`，步骤 8 落库）；
+    - `load_definitions`：**每一步**调用一次，运行期禁用工具能立即生效（4.2.2）；
+    - `agent_permission`：Agent 级权限，与工具级取更严格者（4.2.3 步骤 2）。
+    """
+
+    registry: ToolRegistry
+    executor: ToolExecutor
+    load_definitions: DefinitionsLoader
+    agent_permission: ToolPermissionConfig | None = None
 
 
 class AgentRuntime:
@@ -63,11 +98,13 @@ class AgentRuntime:
         memory: ShortTermMemory,
         tracer: Tracer,
         settings: Settings,
+        toolkit: ToolKit | None = None,
     ) -> None:
         self._llm = llm
         self._memory = memory
         self._tracer = tracer
         self._settings = settings
+        self._toolkit = toolkit
 
     async def run(
         self,
@@ -170,6 +207,11 @@ class AgentRuntime:
                 raise error_for(reason)
 
             state.step_index += 1
+            await self._refresh_tools(state)  # 4.2.2：每一步重新计算可见工具
+            await emit.emit(
+                SseEventType.AGENT_STEP_STARTED,
+                AgentStepStartedPayload(step_index=state.step_index, max_steps=agent.max_steps),
+            )
             message_id = await self._memory.append(
                 _require_conversation(state), ChatMessage.assistant(""), run_id=state.run_id
             )
@@ -189,6 +231,7 @@ class AgentRuntime:
                 usage=result.usage,
                 latency_ms=result.latency_ms,
                 model_name=result.model_name,
+                tool_calls=result.message.tool_calls,
             )
             await emit.emit(
                 SseEventType.MESSAGE_COMPLETED,
@@ -201,13 +244,74 @@ class AgentRuntime:
             state.messages.append(result.message)
             state.finish_reason = result.finish_reason
 
-            if result.message.tool_calls:
-                # 4.4.3 的 tool 分支属 Phase 2（本阶段显式拒绝，不静默忽略）
-                raise FeatureNotImplementedError(
-                    "Tool calling is implemented in Phase 2",
-                    details={"tool_calls": [call.name for call in result.message.tool_calls]},
-                )
+            has_tool_calls = bool(result.message.tool_calls)
+            if has_tool_calls:
+                await self._run_tool_calls(state, emit, cancel, result.message.tool_calls)
+            await emit.emit(
+                SseEventType.AGENT_STEP_COMPLETED,
+                AgentStepCompletedPayload(step_index=state.step_index, has_tool_calls=has_tool_calls),
+            )
+            if not has_tool_calls:
+                return
+
+    # ---- 工具分支（4.4.3 / 4.2.2 / 4.2.3） ----
+    async def _refresh_tools(self, state: AgentState) -> None:
+        """按 `agent.tool_ids` 重新计算本步骤可见的工具（4.2.2：顺序即下发顺序）。"""
+        if self._toolkit is None or not state.agent.tool_ids:
+            state.tool_definitions = []
             return
+        definitions = await self._toolkit.load_definitions()
+        state.tool_definitions = self._toolkit.registry.visible_definitions(
+            definitions, agent_tool_ids=state.agent.tool_ids
+        )
+
+    async def _run_tool_calls(
+        self,
+        state: AgentState,
+        emit: EventEmitter,
+        cancel: asyncio.Event,
+        calls: Sequence[ToolCallSpec],
+    ) -> None:
+        """顺序执行一个 step 内的全部 tool call（SD-2），逐个落 `role=tool` 消息（7.3 任务 6）。"""
+        if self._toolkit is None:
+            raise FeatureNotImplementedError(
+                "Tool calling requires an AgentRuntime built with a ToolKit",
+                details={"tool_calls": [call.name for call in calls]},
+            )
+        conversation_id = _require_conversation(state)
+        definitions = {item.name: item for item in state.tool_definitions}
+        for index, call in enumerate(calls, start=1):
+            if cancel.is_set():
+                raise RunCanceledError()
+            ctx = ToolRunContext(
+                run_id=state.run_id,
+                definitions=definitions,
+                settings=self._settings,
+                tracer=self._tracer,
+                emitter=emit,
+                cancellation=cancel,
+                sandbox_root=self._settings.sandbox_path,
+                agent_permission=self._toolkit.agent_permission,
+                calls_per_tool=state.calls_per_tool,
+                step_index=state.step_index,
+                call_index=index,
+            )
+            invocation = await self._toolkit.executor.execute(call, ctx=ctx)
+            state.tool_call_count += 1
+            message = invocation.to_message()
+            await self._memory.append(conversation_id, message, run_id=state.run_id)
+            state.messages.append(message)
+            self._note_tool_outcome(state, invocation)
+
+    @staticmethod
+    def _note_tool_outcome(state: AgentState, invocation: ToolInvocationResult) -> None:
+        """4.4.3：同一工具**连续**失败 3 次 → Run 失败（`TOOL_REPEATED_FAILURE`）。"""
+        if invocation.succeeded:
+            state.recent_tool_failures.pop(invocation.tool_name, None)
+            return
+        state.recent_tool_failures[invocation.tool_name] = state.recent_tool_failures.get(invocation.tool_name, 0) + 1
+        if repeated_tool_failure(state.recent_tool_failures, invocation.tool_name):
+            raise error_for(StopReason.REPEATED_TOOL_FAILURE)
 
     async def _call_llm(
         self,
@@ -224,6 +328,9 @@ class AgentRuntime:
                 raise RunCanceledError()
             await emit.emit(SseEventType.MESSAGE_DELTA, MessageDeltaPayload(message_id=message_id, delta=piece))
 
+        # 4.2.2：只下发本步骤可见的工具；无可见工具时按 4.1.2 第 4 条传 None（纯对话）
+        schemas = ToolRegistry.function_schemas(state.tool_definitions)
+
         async with self._tracer.span(
             SpanType.LLM,
             f"llm:{agent.model_name}",
@@ -232,13 +339,17 @@ class AgentRuntime:
                 "stream": self._settings.llm_stream,
                 "temperature": agent.model_params.get("temperature"),
                 "provider_id": agent.model_provider_id,
+                "tool_count": len(schemas),
             },
-            input={"messages": _messages_digest(state.messages)},
+            input={
+                "messages": _messages_digest(state.messages),
+                "tools": [item.name for item in state.tool_definitions],
+            },
         ) as span:
             result = await self._llm.chat(
                 state.messages,
                 model=agent.model_name,
-                tools=None,  # Phase 1 无工具（4.1.2 第 4 条：不下发 tools）
+                tools=schemas or None,
                 params=agent.model_params,
                 stream=self._settings.llm_stream,
                 on_delta=on_delta,

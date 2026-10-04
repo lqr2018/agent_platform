@@ -31,6 +31,7 @@ from app.core.events import (
 )
 from app.core.logging import get_logger
 from app.db.models.agent import AGENT_STATUS_ENABLED
+from app.db.models.conversation import message_meta
 from app.db.session import get_sessionmaker
 from app.runtime.agent.emitter import EventEmitter, EventPayload
 from app.runtime.agent.runtime import AgentRuntime
@@ -38,7 +39,14 @@ from app.runtime.agent.state import AgentSpec, RunResult
 from app.runtime.llm.base import ProviderConfig
 from app.runtime.llm.registry import LLMRegistry
 from app.runtime.observability.tracer import Tracer
-from app.services import agent_service, conversation_service, model_provider_service, run_service, trace_service
+from app.services import (
+    agent_service,
+    conversation_service,
+    model_provider_service,
+    run_service,
+    tool_service,
+    trace_service,
+)
 
 logger = get_logger(__name__)
 
@@ -113,7 +121,11 @@ async def start_chat(
         conversation_id=conversation_id,
         role=MessageRole.USER,
         content=content,
-        meta={"agent_prompt_version": agent.prompt_version, "tools": [], "kb_ids": []},
+        meta=message_meta(
+            agent_prompt_version=agent.prompt_version,
+            tools=list(agent.tool_ids or ()),
+            kb_ids=list(agent.knowledge_base_ids or ()),
+        ),
     )
     await run_service.create_run(
         session,
@@ -195,6 +207,7 @@ async def _execute(
                 memory=conversation_service.SqlShortTermMemory(session),
                 tracer=tracer,
                 settings=settings,
+                toolkit=tool_service.build_toolkit(session, settings, tool_ids=agent_spec.tool_ids),
             )
             result = await runtime.run(
                 agent_spec,

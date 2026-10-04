@@ -261,8 +261,13 @@ class SqlShortTermMemory:
         latency_ms: int,
         model_name: str,
         error_code: str | None = None,
+        tool_calls: Sequence[ToolCallSpec] = (),
     ) -> None:
-        """回填流式结果（4.1.1 的 `complete` 细化）。"""
+        """回填流式结果（4.1.1 的 `complete` 细化）。
+
+        `tool_calls` 非空时同时回填 `messages.tool_calls`（4.4.3：`assistant(tool_calls) → tool`
+        的交替必须能落库还原）；纯对话行不动该列，保持 Phase 1 行为不变。
+        """
         row = await get_message(self._session, message_id)
         row.content = content
         row.finish_reason = finish_reason
@@ -272,6 +277,8 @@ class SqlShortTermMemory:
         row.latency_ms = latency_ms
         row.model_name = model_name
         row.error_code = error_code
+        if tool_calls:
+            row.tool_calls = [_tool_call_payload(call) for call in tool_calls]
         await self._session.commit()
 
 

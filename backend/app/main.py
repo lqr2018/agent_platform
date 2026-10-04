@@ -5,9 +5,10 @@
 1. `Settings.assert_production_secrets()` —— prod 下占位密钥直接失败（6.2）；
 2. 准备运行时目录（`DATA_DIR` 下 app.db / chroma / files / uploads / reports）；
 3. `verify_migrations_at_head()` —— 迁移必须等于 head，否则**直接退出**（6.3 第 1 条）；
-4. 生成 `features` 快照供 `/api/v1/meta`（6.3 第 5 条）。
+4. 内置工具与 DB 对齐（6.3 第 2 条 / 4.2.2：代码是内置工具定义的单一来源）；
+5. 生成 `features` 快照供 `/api/v1/meta`（6.3 第 5 条）。
 
-6.3 的第 2、3 条（内置工具与 DB 对齐、孤儿 Run 收敛）需要 `tools` / `runs` 表，分别在 Phase 2 / Phase 3 接入。
+6.3 的第 3 条（孤儿 Run 收敛）需要 `runs` 的终态规则，Phase 3 接入。
 """
 
 from __future__ import annotations
@@ -43,6 +44,7 @@ from app.core.logging import configure_logging, get_logger
 from app.db import session as db_session
 from app.runtime.observability import context as trace_context
 from app.schemas.common import ErrorResponse
+from app.services import tool_service
 
 logger = get_logger(__name__)
 
@@ -188,6 +190,17 @@ def _register_exception_handlers(app: FastAPI) -> None:
 
 
 # ---- lifespan（6.3） ----
+async def _sync_builtin_tools() -> None:
+    """6.3 第 2 条：把 `runtime/tools/builtin/` 的定义与 `tools` 表对齐（4.2.2）。
+
+    缺失则插入、`description` / `input_schema` 等以代码为准更新；运营侧改过的
+    `status` / `permission_config` 不动（2.5：内置工具可禁用、可改权限）。
+    """
+    async with db_session.get_sessionmaker()() as session:
+        counts = await tool_service.sync_builtin_tools(session)
+    logger.info("startup.builtin_tools_ready", **counts)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
@@ -198,6 +211,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.settings = settings
     app.state.features = build_features(settings)
     await db_session.verify_migrations_at_head()
+    await _sync_builtin_tools()
     logger.info(
         "app.startup",
         name=APP_NAME,
