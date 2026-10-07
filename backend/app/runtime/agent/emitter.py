@@ -6,12 +6,13 @@ Workflow / 评测 / 脚本用 `NullEmitter` 或 `ListEmitter`（不依赖 Web �
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Mapping
 from typing import Any, Protocol
 
 from pydantic import BaseModel
 
-from app.core.events import SseEventType
+from app.core.events import SseEventType, SseQueueItem
 
 EventPayload = BaseModel | Mapping[str, Any] | None
 
@@ -44,3 +45,18 @@ class ListEmitter:
 
     def payload_for(self, event: SseEventType) -> dict[str, Any]:
         return next((data for name, data in self.events if name == str(event)), {})
+
+
+class QueueEmitter:
+    """把事件推进 `asyncio.Queue`（SSE 端点消费）。
+
+    `chat_service`（Chat 流）与 `workflow_service`（Chat 内联 Workflow）共用；
+    队列元素形状见 `core/events.py::SseQueueItem`。
+    """
+
+    def __init__(self, queue: asyncio.Queue[SseQueueItem]) -> None:
+        self._queue = queue
+
+    async def emit(self, event: SseEventType, payload: EventPayload = None) -> None:
+        data = payload.model_dump(mode="json") if isinstance(payload, BaseModel) else dict(payload or {})
+        await self._queue.put((event, data))

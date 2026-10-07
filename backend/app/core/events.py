@@ -21,6 +21,13 @@ from pydantic import BaseModel, Field
 
 from app.schemas.common import UtcDatetime
 
+SseQueueItem = tuple["SseEventType", dict[str, Any]] | None
+"""SSE 事件队列的元素：`(事件, payload)`；`None` 是"流结束"哨兵。
+
+`chat_service`（Chat 流）与 `workflow_service`（Chat 内联 Workflow，3.4）共用同一种队列形状，
+HTTP 层（`api/v1/chat.py`）只认它 —— 于是两条路径可以复用同一个 SSE 端点。
+"""
+
 
 class SseEventType(StrEnum):
     """3.4 / 附录 B 的 21 个事件名（顺序与表格一致）。"""

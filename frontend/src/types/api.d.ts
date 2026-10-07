@@ -404,6 +404,188 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workflow-runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Workflow 运行列表（?workflow_id=&status=） */
+        get: operations["list_workflow_runs_api_v1_workflow_runs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workflow-runs/{run_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 运行详情（含 state 与当前节点） */
+        get: operations["get_workflow_run_api_v1_workflow_runs__run_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workflow-runs/{run_id}/cancel": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 取消运行中的 WorkflowRun */
+        post: operations["cancel_workflow_run_api_v1_workflow_runs__run_id__cancel_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workflow-runs/{run_id}/node-runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 节点执行记录（按 seq 排序） */
+        get: operations["list_node_runs_api_v1_workflow_runs__run_id__node_runs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workflow-runs/{run_id}/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 从 checkpoint 续跑（4.5.4 的两类场景） */
+        post: operations["resume_workflow_run_api_v1_workflow_runs__run_id__resume_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workflows": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Workflow 列表（?status=&q=） */
+        get: operations["list_workflows_api_v1_workflows_get"];
+        put?: never;
+        /**
+         * 新建 Workflow（定义走图校验）
+         * @description 图非法 → `WORKFLOW_INVALID_GRAPH`（422，`details.errors` 带错误清单，SD-1）。
+         */
+        post: operations["create_workflow_api_v1_workflows_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workflows/{workflow_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Workflow 详情 */
+        get: operations["get_workflow_api_v1_workflows__workflow_id__get"];
+        put?: never;
+        post?: never;
+        /** 删除（有运行中的 Run → 409） */
+        delete: operations["delete_workflow_api_v1_workflows__workflow_id__delete"];
+        options?: never;
+        head?: never;
+        /** 更新（定义变更回 draft） */
+        patch: operations["update_workflow_api_v1_workflows__workflow_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/workflows/{workflow_id}/publish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 发布（version +1） */
+        post: operations["publish_workflow_api_v1_workflows__workflow_id__publish_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workflows/{workflow_id}/runs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 启动运行 → 202（进度用 /workflow-runs/{id}/node-runs 轮询）
+         * @description 3.4：**不返回 SSE** —— 202 + 轮询（Workflow 可能是分钟级长任务）。
+         */
+        post: operations["start_workflow_run_api_v1_workflows__workflow_id__runs_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workflows/{workflow_id}/validate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 只校验不落库（可带未保存的草稿）
+         * @description 请求体可省略（校验已存定义）；带 `definition` 时校验**草稿**（编辑器"保存前先校验"）。
+         */
+        post: operations["validate_workflow_api_v1_workflows__workflow_id__validate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/healthz": {
         parameters: {
             query?: never;
@@ -678,6 +860,21 @@ export interface components {
             data: components["schemas"]["TraceDetail"];
             meta: components["schemas"]["ResponseMeta"];
         };
+        /** ApiResponse[WorkflowRead] */
+        ApiResponse_WorkflowRead_: {
+            data: components["schemas"]["WorkflowRead"];
+            meta: components["schemas"]["ResponseMeta"];
+        };
+        /** ApiResponse[WorkflowRunRead] */
+        ApiResponse_WorkflowRunRead_: {
+            data: components["schemas"]["WorkflowRunRead"];
+            meta: components["schemas"]["ResponseMeta"];
+        };
+        /** ApiResponse[WorkflowValidateResult] */
+        ApiResponse_WorkflowValidateResult_: {
+            data: components["schemas"]["WorkflowValidateResult"];
+            meta: components["schemas"]["ResponseMeta"];
+        };
         /** ApiResponse[list[AgentPromptVersionRead]] */
         ApiResponse_list_AgentPromptVersionRead__: {
             /** Data */
@@ -700,6 +897,12 @@ export interface components {
         ApiResponse_list_MessageRead__: {
             /** Data */
             data: components["schemas"]["MessageRead"][];
+            meta: components["schemas"]["ResponseMeta"];
+        };
+        /** ApiResponse[list[NodeRunRead]] */
+        ApiResponse_list_NodeRunRead__: {
+            /** Data */
+            data: components["schemas"]["NodeRunRead"][];
             meta: components["schemas"]["ResponseMeta"];
         };
         /** ApiResponse[list[ProviderRead]] */
@@ -730,6 +933,18 @@ export interface components {
         ApiResponse_list_TraceRead__: {
             /** Data */
             data: components["schemas"]["TraceRead"][];
+            meta: components["schemas"]["ResponseMeta"];
+        };
+        /** ApiResponse[list[WorkflowRead]] */
+        ApiResponse_list_WorkflowRead__: {
+            /** Data */
+            data: components["schemas"]["WorkflowRead"][];
+            meta: components["schemas"]["ResponseMeta"];
+        };
+        /** ApiResponse[list[WorkflowRunRead]] */
+        ApiResponse_list_WorkflowRunRead__: {
+            /** Data */
+            data: components["schemas"]["WorkflowRunRead"][];
             meta: components["schemas"]["ResponseMeta"];
         };
         /** ConversationCreate */
@@ -982,6 +1197,71 @@ export interface components {
             output_price_per_1k_usd?: number | null;
         };
         /**
+         * NodeRunRead
+         * @description `node_runs` 行（3.2.7：节点执行记录，按 `seq`）。
+         */
+        NodeRunRead: {
+            /** Agent Run Id */
+            agent_run_id?: string | null;
+            /**
+             * Attempt
+             * @default 1
+             */
+            attempt: number;
+            /** Created At */
+            created_at: string;
+            /** Ended At */
+            ended_at?: string | null;
+            /** Error Code */
+            error_code?: string | null;
+            /** Error Message */
+            error_message?: string | null;
+            /** Id */
+            id: string;
+            /** Input */
+            input?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Iteration
+             * @default 1
+             */
+            iteration: number;
+            /** Latency Ms */
+            latency_ms?: number | null;
+            /**
+             * Name
+             * @default
+             */
+            name: string;
+            /** Node Id */
+            node_id: string;
+            /** Node Type */
+            node_type: string;
+            /** Output */
+            output?: {
+                [key: string]: unknown;
+            };
+            /** Run Id */
+            run_id: string;
+            /**
+             * Seq
+             * @default 0
+             */
+            seq: number;
+            /** Span Id */
+            span_id?: string | null;
+            /** Started At */
+            started_at: string;
+            /**
+             * Status
+             * @default running
+             */
+            status: string;
+            /** Trace Id */
+            trace_id?: string | null;
+        };
+        /**
          * PermissionLevel
          * @enum {string}
          */
@@ -1172,6 +1452,9 @@ export interface components {
         /**
          * RunRead
          * @description `GET /runs/{run_id}`（3.2.4：含 steps / token / cost）。
+         *
+         *     Phase 3 起 `workflow_run_id` 也在这里返回（`kind=workflow` 时指向 `workflow_runs`，2.6），
+         *     前端可以从 Run 列表直接跳到 Workflow 运行详情页。
          */
         RunRead: {
             /** Agent Id */
@@ -1238,6 +1521,8 @@ export interface components {
             total_tokens: number;
             /** Trace Id */
             trace_id?: string | null;
+            /** Workflow Run Id */
+            workflow_run_id?: string | null;
         };
         /**
          * ShortTermConfigDTO
@@ -1832,6 +2117,204 @@ export interface components {
             msg: string;
             /** Error Type */
             type: string;
+        };
+        /**
+         * WorkflowCreate
+         * @description `POST /workflows`（3.2.7：`definition` 走图校验）。
+         */
+        WorkflowCreate: {
+            /** Definition */
+            definition: {
+                [key: string]: unknown;
+            };
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /** Name */
+            name: string;
+            /** State Schema */
+            state_schema?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Status
+             * @default draft
+             * @enum {string}
+             */
+            status: "draft" | "published";
+        };
+        /**
+         * WorkflowRead
+         * @description `workflows` 行（3.2.7 的列表 / 详情共用）。
+         */
+        WorkflowRead: {
+            /** Created At */
+            created_at: string;
+            /** Definition */
+            definition?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /**
+             * Node Count
+             * @description 节点数（由 `definition.nodes` 现算，列表页直接展示）。
+             */
+            readonly node_count: number;
+            /**
+             * Start Node Id
+             * @default
+             */
+            start_node_id: string;
+            /** State Schema */
+            state_schema?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Status
+             * @default draft
+             */
+            status: string;
+            /** Updated At */
+            updated_at: string;
+            /**
+             * Version
+             * @default 1
+             */
+            version: number;
+        };
+        /**
+         * WorkflowRunCreate
+         * @description `POST /workflows/{id}/runs` 的请求（3.2.7：启动运行 → 202）。
+         *
+         *     3.2.7 未规定请求体形状；这里定成 `input`（注入初始 state 的业务字段），
+         *     inline Chat 场景由服务层自动注入 `input`（用户消息）与 `conversation_id`。
+         */
+        WorkflowRunCreate: {
+            /** Input */
+            input?: {
+                [key: string]: unknown;
+            };
+        };
+        /**
+         * WorkflowRunRead
+         * @description `workflow_runs` 行（3.2.7：详情含 `state` 与当前节点）。
+         */
+        WorkflowRunRead: {
+            /** Created At */
+            created_at: string;
+            /** Current Node Id */
+            current_node_id?: string | null;
+            /** Ended At */
+            ended_at?: string | null;
+            /** Error Code */
+            error_code?: string | null;
+            /** Error Message */
+            error_message?: string | null;
+            /** Id */
+            id: string;
+            /** Input */
+            input?: {
+                [key: string]: unknown;
+            };
+            /** Latency Ms */
+            latency_ms?: number | null;
+            /** Output */
+            output?: {
+                [key: string]: unknown;
+            };
+            /** Started At */
+            started_at: string;
+            /** State */
+            state?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Status
+             * @default pending
+             */
+            status: string;
+            /** Trace Id */
+            trace_id?: string | null;
+            /**
+             * Trigger
+             * @default manual
+             */
+            trigger: string;
+            /** Workflow Id */
+            workflow_id: string;
+            /**
+             * Workflow Version
+             * @default 1
+             */
+            workflow_version: number;
+        };
+        /**
+         * WorkflowUpdate
+         * @description `PATCH /workflows/{id}`：只传需要改的字段（同 `ToolUpdate` 的约定）。
+         *
+         *     2.9：`definition` 变更后 `status` 回到 `draft`（已发布版本的语义不能悄悄漂移）。
+         */
+        WorkflowUpdate: {
+            /** Definition */
+            definition?: {
+                [key: string]: unknown;
+            } | null;
+            /** Description */
+            description?: string | null;
+            /** Name */
+            name?: string | null;
+            /** State Schema */
+            state_schema?: {
+                [key: string]: unknown;
+            } | null;
+            /** Status */
+            status?: ("draft" | "published" | "archived") | null;
+        };
+        /**
+         * WorkflowValidateRequest
+         * @description 可选请求体：直接校验一份**未保存**的草稿（编辑器里"保存前先校验"）。
+         */
+        WorkflowValidateRequest: {
+            /** Definition */
+            definition?: {
+                [key: string]: unknown;
+            } | null;
+        };
+        /**
+         * WorkflowValidateResult
+         * @description `POST /workflows/{id}/validate`（3.2.7：只校验不落库）。
+         */
+        WorkflowValidateResult: {
+            /** Errors */
+            errors?: components["schemas"]["WorkflowValidationIssue"][];
+            /** Graph */
+            graph?: {
+                [key: string]: unknown;
+            } | null;
+            /** Valid */
+            valid: boolean;
+        };
+        /**
+         * WorkflowValidationIssue
+         * @description 一条图校验错误（对应 `graph.GraphIssue`）。
+         */
+        WorkflowValidationIssue: {
+            /** Code */
+            code: string;
+            /** Message */
+            message: string;
+            /** Node Id */
+            node_id?: string | null;
         };
     };
     responses: never;
@@ -2927,6 +3410,427 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiResponse_TraceDetail_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_workflow_runs_api_v1_workflow_runs_get: {
+        parameters: {
+            query?: {
+                workflow_id?: string | null;
+                status?: string | null;
+                page?: number;
+                page_size?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_list_WorkflowRunRead__"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_workflow_run_api_v1_workflow_runs__run_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_WorkflowRunRead_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    cancel_workflow_run_api_v1_workflow_runs__run_id__cancel_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_WorkflowRunRead_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_node_runs_api_v1_workflow_runs__run_id__node_runs_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_list_NodeRunRead__"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    resume_workflow_run_api_v1_workflow_runs__run_id__resume_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                run_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_WorkflowRunRead_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_workflows_api_v1_workflows_get: {
+        parameters: {
+            query?: {
+                /** @description draft / published / archived */
+                status?: string | null;
+                /** @description 按名称模糊匹配 */
+                q?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_list_WorkflowRead__"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_workflow_api_v1_workflows_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkflowCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_WorkflowRead_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_workflow_api_v1_workflows__workflow_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workflow_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_WorkflowRead_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_workflow_api_v1_workflows__workflow_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workflow_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_workflow_api_v1_workflows__workflow_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workflow_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkflowUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_WorkflowRead_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    publish_workflow_api_v1_workflows__workflow_id__publish_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workflow_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_WorkflowRead_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    start_workflow_run_api_v1_workflows__workflow_id__runs_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workflow_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["WorkflowRunCreate"] | null;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_WorkflowRunRead_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    validate_workflow_api_v1_workflows__workflow_id__validate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workflow_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["WorkflowValidateRequest"] | null;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_WorkflowValidateResult_"];
                 };
             };
             /** @description Validation Error */

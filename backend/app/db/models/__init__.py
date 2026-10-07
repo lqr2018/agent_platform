@@ -12,6 +12,7 @@ from app.db.models.conversation import Conversation, Message, Run
 from app.db.models.llm import ModelProvider
 from app.db.models.tool import Tool, ToolInvocation
 from app.db.models.trace import Span, Trace
+from app.db.models.workflow import NodeRun, Workflow, WorkflowRun
 
 __all__ = [
     "Agent",
@@ -19,9 +20,12 @@ __all__ = [
     "Conversation",
     "Message",
     "ModelProvider",
+    "NodeRun",
     "Run",
     "Span",
     "Tool",
     "ToolInvocation",
     "Trace",
+    "Workflow",
+    "WorkflowRun",
 ]

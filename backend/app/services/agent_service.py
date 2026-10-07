@@ -4,8 +4,9 @@
 - `system_prompt` 变化 → 先把**旧值**落 `agent_prompt_versions`（`version = 当前值`），
   再更新 `agents` 并把 `prompt_version += 1`（2.4 的写入约定）；
 - Phase 2 的引用校验：`tool_ids` 必须指向**存在且 enabled** 的工具（4.2.2）；
-  `knowledge_base_ids` / `workflow_id` 仍必须为空（对应能力分别在 Phase 5 / Phase 3 落地，
-  SD-14②：不为未实现的能力留入口）。
+- Phase 3 的引用校验：`workflow_id` 必须指向**存在且 published** 的 Workflow（2.9：Agent 绑的是
+  一个已发布的版本，`draft` 只能试跑不能被 Agent 引用）；
+  `knowledge_base_ids` 仍必须为空（Phase 5 落地，SD-14②：不为未实现的能力留入口）。
 """
 
 from __future__ import annotations
@@ -16,8 +17,9 @@ from datetime import UTC, datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.enums import WorkflowStatus
 from app.core.errors import AgentInvalidConfigError, AgentNotFoundError, ConflictError
-from app.db.models import Agent, AgentPromptVersion, ModelProvider, Tool
+from app.db.models import Agent, AgentPromptVersion, ModelProvider, Tool, Workflow
 from app.db.models.agent import AGENT_STATUS_ENABLED, default_memory_config
 from app.db.models.tool import TOOL_STATUS_ENABLED
 from app.runtime.agent.state import AgentSpec
@@ -25,9 +27,11 @@ from app.schemas.agent import AgentCloneRequest, AgentCreate, AgentUpdate
 
 UNSUPPORTED_FIELDS = {
     "knowledge_base_ids": "KNOWLEDGE_BASES_NOT_AVAILABLE_IN_PHASE_5",
-    "workflow_id": "WORKFLOWS_NOT_AVAILABLE_IN_PHASE_3",
 }
-"""本 build 不允许的引用字段 → `AGENT_INVALID_CONFIG.details.reason`（供前端提示）。"""
+"""本 build 不允许的引用字段 → `AGENT_INVALID_CONFIG.details.reason`（供前端提示）。
+
+Phase 3 起 `workflow_id` 已经可用（见 `_validate_workflow`），故从本表移除。
+"""
 
 
 async def get_agent(session: AsyncSession, agent_id: str, *, include_deleted: bool = False) -> Agent:
@@ -60,9 +64,10 @@ async def list_agents(
 
 async def create_agent(session: AsyncSession, data: AgentCreate) -> Agent:
     """新建 Agent（校验引用与白名单，3.2.2 / 3.3.1）。"""
-    _reject_unsupported_fields(knowledge_base_ids=data.knowledge_base_ids, workflow_id=data.workflow_id)
+    _reject_unsupported_fields(knowledge_base_ids=data.knowledge_base_ids)
     await _validate_model(session, provider_id=data.model_provider_id, model_name=data.model_name)
     await _validate_tools(session, data.tool_ids)
+    await _validate_workflow(session, data.workflow_id)
     await _ensure_name_available(session, data.name)
 
     agent = Agent(
@@ -104,6 +109,9 @@ async def update_agent(session: AsyncSession, agent_id: str, data: AgentUpdate) 
     name = changes.get("name")
     if name is not None and name != agent.name:
         await _ensure_name_available(session, name)
+
+    if "workflow_id" in changes:
+        await _validate_workflow(session, changes["workflow_id"])
 
     new_prompt = changes.pop("system_prompt", None)
     if new_prompt is not None and new_prompt != agent.system_prompt:
@@ -218,20 +226,33 @@ async def _ensure_name_available(session: AsyncSession, name: str) -> None:
         raise ConflictError(f"Agent name '{name}' already exists", details={"name": name})
 
 
-def _reject_unsupported_fields(*, knowledge_base_ids: Sequence[str], workflow_id: str | None) -> None:
-    """不接受知识库 / Workflow 引用（SD-14②：对应能力分别在 Phase 5 / Phase 3 落地）。"""
-    offenders = {
-        field: reason
-        for field, value, reason in (
-            ("knowledge_base_ids", knowledge_base_ids, UNSUPPORTED_FIELDS["knowledge_base_ids"]),
-            ("workflow_id", workflow_id, UNSUPPORTED_FIELDS["workflow_id"]),
-        )
-        if value
-    }
-    if offenders:
+def _reject_unsupported_fields(*, knowledge_base_ids: Sequence[str]) -> None:
+    """不接受知识库引用（SD-14②：能力在 Phase 5 落地）。"""
+    if knowledge_base_ids:
         raise AgentInvalidConfigError(
-            "This build does not support knowledge bases / workflows yet (Phase 3 / Phase 5)",
-            details={"reason": "PHASE_NOT_SUPPORTED", "fields": offenders},
+            "This build does not support knowledge bases yet (Phase 5)",
+            details={
+                "reason": "PHASE_NOT_SUPPORTED",
+                "fields": {"knowledge_base_ids": UNSUPPORTED_FIELDS["knowledge_base_ids"]},
+            },
+        )
+
+
+async def _validate_workflow(session: AsyncSession, workflow_id: str | None) -> None:
+    """Phase 3：`workflow_id` 必须指向**存在且 published** 的 Workflow（2.9）。
+
+    只有 `published` 能被 Agent 绑定：`draft` 表示"定义还在改"，绑定它会让 Agent 的行为随编辑漂移；
+    想在编辑器里试跑 draft，用 `POST /workflows/{id}/runs`（3.2.7），不必先绑给 Agent。
+    """
+    if not workflow_id:
+        return
+    workflow = await session.get(Workflow, workflow_id)
+    if workflow is None:
+        raise AgentInvalidConfigError(f"Workflow '{workflow_id}' does not exist", details={"field": "workflow_id"})
+    if workflow.status != str(WorkflowStatus.PUBLISHED):
+        raise AgentInvalidConfigError(
+            f"Workflow '{workflow.name}' is '{workflow.status}'; only published workflows can be bound",
+            details={"field": "workflow_id", "status": workflow.status},
         )
 
 

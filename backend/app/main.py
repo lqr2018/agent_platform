@@ -6,9 +6,8 @@
 2. 准备运行时目录（`DATA_DIR` 下 app.db / chroma / files / uploads / reports）；
 3. `verify_migrations_at_head()` —— 迁移必须等于 head，否则**直接退出**（6.3 第 1 条）；
 4. 内置工具与 DB 对齐（6.3 第 2 条 / 4.2.2：代码是内置工具定义的单一来源）；
-5. 生成 `features` 快照供 `/api/v1/meta`（6.3 第 5 条）。
-
-6.3 的第 3 条（孤儿 Run 收敛）需要 `runs` 的终态规则，Phase 3 接入。
+5. 孤儿 Run / WorkflowRun 收敛（6.3 第 3 条，Phase 3 接入）；
+6. 生成 `features` 快照供 `/api/v1/meta`（6.3 第 5 条）。
 """
 
 from __future__ import annotations
@@ -44,7 +43,7 @@ from app.core.logging import configure_logging, get_logger
 from app.db import session as db_session
 from app.runtime.observability import context as trace_context
 from app.schemas.common import ErrorResponse
-from app.services import tool_service
+from app.services import tool_service, workflow_service
 
 logger = get_logger(__name__)
 
@@ -201,6 +200,21 @@ async def _sync_builtin_tools() -> None:
     logger.info("startup.builtin_tools_ready", **counts)
 
 
+async def _converge_orphan_runs() -> None:
+    """6.3 第 3 条：把上次进程留下的 `running`（超 `timeout × 2`）标为 `failed`。
+
+    失败只记日志、不阻断启动（6.3 的开头约定：除第 1 条外都不阻断）。
+    """
+    try:
+        async with db_session.get_sessionmaker()() as session:
+            counts = await workflow_service.converge_orphan_runs(session, get_settings())
+    except Exception:
+        logger.warning("startup.orphan_runs_failed", exc_info=True)
+        return
+    if counts["workflow_runs"] or counts["runs"]:
+        logger.info("startup.orphan_runs_converged", **counts)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
@@ -212,6 +226,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     app.state.features = build_features(settings)
     await db_session.verify_migrations_at_head()
     await _sync_builtin_tools()
+    await _converge_orphan_runs()
     logger.info(
         "app.startup",
         name=APP_NAME,

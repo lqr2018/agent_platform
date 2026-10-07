@@ -71,7 +71,7 @@ async def test_create_rejects_unknown_provider_and_model(session: AsyncSession, 
 
 @pytest.mark.asyncio
 async def test_create_validates_tool_references(session: AsyncSession, provider: ModelProvider) -> None:
-    """Phase 2：`tool_ids` 必须存在且 enabled（4.2.2）；KB / Workflow 引用仍被拒（SD-14②）。"""
+    """Phase 2–3：`tool_ids` 必须存在且 enabled（4.2.2）；`workflow_id` 必须存在且已发布（2.9）。"""
     with pytest.raises(AgentInvalidConfigError) as excinfo:
         await agent_service.create_agent(session, _payload(provider, tool_ids=["01J8Z0000000000000000000T1"]))
     assert excinfo.value.details == {"field": "tool_ids", "unknown": ["01J8Z0000000000000000000T1"]}
@@ -93,7 +93,7 @@ async def test_create_validates_tool_references(session: AsyncSession, provider:
         await agent_service.create_agent(
             session, _payload(provider, name="wf-agent", workflow_id="01J8Z00000000000000000W1")
         )
-    assert "workflow_id" in wf_error.value.details["fields"]
+    assert wf_error.value.details == {"field": "workflow_id"}
 
     created = await agent_service.create_agent(
         session, _payload(provider, name="tool-agent", tool_ids=[builtin_tool_id("calculator")])

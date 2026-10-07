@@ -16,7 +16,8 @@ from tests.conftest import alembic_config_for, sqlite_url
 
 PHASE0_REVISION = "0001_phase0_baseline"
 PHASE1_REVISION = "0002_phase1_core_tables"
-HEAD_REVISION = "0003_phase2_tool_tables"
+PHASE2_REVISION = "0003_phase2_tool_tables"
+HEAD_REVISION = "0004_phase3_workflow_tables"
 
 PHASE1_TABLES = {
     "model_providers",
@@ -33,8 +34,19 @@ PHASE1_TABLES = {
 PHASE2_TABLES = PHASE1_TABLES | {"tools", "tool_invocations"}
 """Phase 2 追加 `tools` / `tool_invocations`（2.5；`approvals` 属 Backlog，SD-17）。"""
 
+PHASE3_TABLES = PHASE2_TABLES | {"workflows", "workflow_runs", "node_runs"}
+"""Phase 3 追加 Workflow 域三张表（2.9 / 7.4）。"""
+
 TOOL_SEED_NAMES = ["calculator", "file_read", "file_write", "python_execute", "web_search"]
 """4.2.2 的 5 个内置工具（迁移 `0003` 的数据迁移写入）。"""
+
+PHASE3_FOREIGN_KEYS = {
+    ("agents", "workflow_id"): "workflows",
+    ("runs", "workflow_run_id"): "workflow_runs",
+    ("workflow_runs", "workflow_id"): "workflows",
+    ("node_runs", "run_id"): "workflow_runs",
+}
+"""Phase 3 补上 / 新建的外键（2.9 + 0002 的"Phase 3 用 batch 迁移补 FK"）。"""
 
 
 def _sync_sqlite_url(db_path: Path) -> str:
@@ -80,14 +92,32 @@ def test_phase1_migration_matches_models(tmp_path: Path) -> None:
 
 
 def test_phase2_migration_matches_models(tmp_path: Path) -> None:
-    """7.2：head 的迁移必须与 `Base.metadata`（ORM 模型）完全一致（2.14）。"""
+    """升到 Phase 2 时只出现 Phase 1+2 的表（Phase 3 的三张表还不该存在）。"""
     db_path = tmp_path / "phase2.db"
-    command.upgrade(alembic_config_for(sqlite_url(db_path)), HEAD_REVISION)
+    command.upgrade(alembic_config_for(sqlite_url(db_path)), PHASE2_REVISION)
     with create_engine(_sync_sqlite_url(db_path)).connect() as conn:
         tables = set(inspect(conn).get_table_names())
 
     assert tables == PHASE2_TABLES | {"alembic_version"}
-    assert set(Base.metadata.tables) == PHASE2_TABLES
+
+
+def test_phase3_migration_matches_models(tmp_path: Path) -> None:
+    """7.4：head 的迁移必须与 `Base.metadata`（ORM 模型）完全一致（2.14）。"""
+    db_path = tmp_path / "phase3.db"
+    command.upgrade(alembic_config_for(sqlite_url(db_path)), HEAD_REVISION)
+    with create_engine(_sync_sqlite_url(db_path)).connect() as conn:
+        inspector = inspect(conn)
+        tables = set(inspector.get_table_names())
+        foreign_keys: dict[tuple[str, str], str | None] = {}
+        for table, column in PHASE3_FOREIGN_KEYS:
+            referrers = {
+                item["constrained_columns"][0]: item["referred_table"] for item in inspector.get_foreign_keys(table)
+            }
+            foreign_keys[(table, column)] = referrers.get(column)
+
+    assert tables == PHASE3_TABLES | {"alembic_version"}
+    assert set(Base.metadata.tables) == PHASE3_TABLES
+    assert foreign_keys == PHASE3_FOREIGN_KEYS
 
 
 def test_phase2_migration_seeds_builtin_tools(tmp_path: Path) -> None:
@@ -108,15 +138,15 @@ def test_phase2_migration_seeds_builtin_tools(tmp_path: Path) -> None:
 
 
 def test_downgrade_only_drops_phase2_tables(tmp_path: Path) -> None:
-    """`0003` 的 downgrade 必须只回退 Phase 2（Phase 1 的表与数据保留）。"""
-    db_path = tmp_path / "phase2_downgrade.db"
+    """`0004` → `0003` 的 downgrade 只回退 Phase 3（Phase 1/2 的表与数据保留）。"""
+    db_path = tmp_path / "phase3_downgrade.db"
     config = alembic_config_for(sqlite_url(db_path))
     command.upgrade(config, "head")
-    command.downgrade(config, PHASE1_REVISION)
+    command.downgrade(config, PHASE2_REVISION)
     with create_engine(_sync_sqlite_url(db_path)).connect() as conn:
         tables = set(inspect(conn).get_table_names())
 
-    assert tables == PHASE1_TABLES | {"alembic_version"}
+    assert tables == PHASE2_TABLES | {"alembic_version"}
 
 
 def test_upgrade_creates_missing_database_directory(tmp_path: Path) -> None:
@@ -135,7 +165,19 @@ def test_upgrade_creates_missing_database_directory(tmp_path: Path) -> None:
     assert db_path.is_file()
     with create_engine(_sync_sqlite_url(db_path)).connect() as conn:
         tables = set(inspect(conn).get_table_names())
-    assert tables == PHASE2_TABLES | {"alembic_version"}
+    assert tables == PHASE3_TABLES | {"alembic_version"}
+
+
+def test_downgrade_to_phase1_drops_phase2_and_phase3_tables(tmp_path: Path) -> None:
+    """`0004` → `0002` 连续回退：Phase 2/3 的表全部消失，Phase 1 保留（2.14 的往返要求）。"""
+    db_path = tmp_path / "phase1_downgrade.db"
+    config = alembic_config_for(sqlite_url(db_path))
+    command.upgrade(config, "head")
+    command.downgrade(config, PHASE1_REVISION)
+    with create_engine(_sync_sqlite_url(db_path)).connect() as conn:
+        tables = set(inspect(conn).get_table_names())
+
+    assert tables == PHASE1_TABLES | {"alembic_version"}
 
 
 def test_head_revision_matches_script_directory() -> None:

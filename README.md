@@ -75,7 +75,7 @@ frontend  →  /api/v1 (HTTP + SSE)  →  api
 | 基础设施：配置 / 日志 / 错误模型 / 迁移 / 健康检查 | ✅ Phase 0 |
 | Agent Runtime：Provider / Agent CRUD / 流式对话 / Trace | ✅ Phase 1（M1） |
 | Tool Calling：Tool Registry / 权限分级 / 沙箱 | ✅ Phase 2（M2） |
-| Workflow：串行图 / 状态落库 / 断点续跑 | Phase 3（M2） |
+| Workflow：串行图 / 状态落库 / 断点续跑 | ✅ Phase 3（M2） |
 | RAG：知识库 / 摄取 / 检索 / 引用 | Phase 5（M3） |
 | Trace 与轻量评测（`scripts/evaluate.py`） | Phase 7（M3） |
 | Memory / MCP / 审批后台 / 评测平台 | 设计已就位，**不在第一阶段**（《详细设计》0.5.3 Backlog） |
@@ -84,7 +84,7 @@ frontend  →  /api/v1 (HTTP + SSE)  →  api
 
 ## 5. 当前进度
 
-**已完成：Phase 0 项目基础设施 + Phase 1 最小 Agent Runtime + Phase 2 Tool Calling**（对齐《详细设计》7.1 / 7.2 / 7.3）
+**已完成：Phase 0 项目基础设施 + Phase 1 最小 Agent Runtime + Phase 2 Tool Calling + Phase 3 Workflow**（对齐《详细设计》7.1 / 7.2 / 7.3 / 7.4）
 
 Phase 0（基础设施）：
 
@@ -117,9 +117,24 @@ Phase 2（Tool Calling）：
 - [x] 前端：`/tools` 工具管理页（列表 / 筛选 / 详情 / 启停 / 权限编辑 / 试跑 / 删除）+ Chat 内**工具调用卡片**（名称 / 参数 / 结果 / 耗时 / 状态）+ Trace 树 tool 层（`input` / `output`）
 - [x] 启动对齐：`sync_builtin_tools()` 把代码侧定义同步进 DB，且**不动**运营侧的 `status` / `permission_config`
 
-**验证情况（Phase 0–2）**：后端 `pytest` **402 项**（399 passed + 3 skipped）、覆盖率 **93%**（`app/runtime/tools/**` 85–100%、`app/services/tool_service.py` 96%；`app/api/**` 的端点尾行在本机 coverage 下偏保守，口径见《详细设计》7.2 的说明）、`ruff` / `mypy --strict` 0 告警、`alembic` 往返 + `alembic check`（`No new upgrade operations detected`）、就绪探针 `python -m app.scripts.check_readyz` 在**干净检出（无 `data/` 目录）**下通过（`ok=True revision 0003_phase2_tool_tables`）；前端 `eslint` / `prettier` / `tsc` / `vitest`（**23 项**）/ `vite build` 全绿。Phase 1 的回归用例全绿（无工具 Agent 行为不变，`test_chat_sse.py` / `test_agent_runtime.py`）；Phase 2 的端到端链路（fake Provider 触发 `calculator` → 工具事件 + `tool_invocations` + tool span，跑在真实 `create_app()` + lifespan + SQLite 上）见 `tests/integration/test_chat_tool_sse.py`。
+Phase 3（Workflow）：
 
-下一步：**Phase 3 Workflow**（见《详细设计》7.4，M2）。
+- [x] 迁移 `0004_phase3_workflow_tables`（`workflows` / `workflow_runs` / `node_runs`）+ 补 `agents.workflow_id` / `runs.workflow_run_id` 两个外键（batch 迁移，`ON DELETE SET NULL`）
+- [x] 图解析与静态校验（`runtime/workflow/graph.py`）：唯一 id / 一个 start / 至少一个 end / 可达 / 无孤立节点 / 引用存在，**多出边 → `PARALLEL_EDGES_NOT_SUPPORTED`**（SD-1）；模板保存时静态检查（白名单外函数 / 未知根）
+- [x] 受限模板求值（`template.py`）：`{{state.x}}` / `{{nodes.<id>.output}}` / `{{run.run_id}}` + 白名单函数（`len` / `str` / `join` / `json.dumps`），**不使用 `eval`**；未定义字段 → 空串 + warning
+- [x] 六类节点语义（`nodes.py`，无 `human`）：`start` / `agent` / `tool` / `retriever` / `condition` / `end`；`on_error` 三态 `fail` / `continue` / `retry(n)`；`max_steps` + `recursion_limit` 双重上限
+- [x] `SimpleEngine`（唯一引擎，SD-10）+ `WorkflowEngine` Protocol + conformance 模板（`agent` / `tool`节点复用既有 Runtime / 九步流水线）
+- [x] 每节点落 `node_runs`（`seq` / `iteration` / `attempt` / 状态 / 耗时 / 输出摘要）并更新 `state` / `current_node_id` / `checkpoint`；span 层级 `run → workflow → node:{id} → agent/tool/llm`
+- [x] `checkpoint` + `resume`（两类合法场景：可重试失败的 Run、进程重启后的孤儿 Run）；引擎版本不匹配按 SD-10 降级从头重跑
+- [x] API：`/workflows` 全量 7 端点（含 `/validate` 与 `/publish`）+ `/workflow-runs` 5 端点（列表 / 详情 / `node-runs` / `resume` / `cancel`）
+- [x] Chat 内联 Workflow（4.4.4）：`agent.workflow_id` 非空时由引擎驱动，事件 13/14 与消息事件走同一条 SSE
+- [x] 启动自检第 3 条：孤儿 Run / WorkflowRun 收敛（`RUN_ABANDONED`）
+- [x] 前端：`/workflows[/:id]`（列表 / JSON 编辑 / 校验面板 / 只读图 / 试跑 + 2s 轮询节点状态 / resume / cancel / 历史运行）
+- [x] `configs/workflows/*.yaml`（8.2 / 8.4 的示例图）+ 装载器与结构校验
+
+**验证情况（Phase 0–3）**：后端 `pytest` **500 项**（497 passed + 3 skipped）、覆盖率 **91%**、`ruff check` / `ruff format --check` 0 告警、`mypy app` 通过、`alembic` 往返 + `alembic check`（`No new upgrade operations detected`）、就绪探针 `python -m app.scripts.check_readyz` 通过（`ok=True revision 0004_phase3_workflow_tables`）；前端 `eslint` / `prettier` / `tsc` / `vitest`（**28 项**）/ `vite build` 全绿。Phase 1/2 的回归用例全绿（无 Workflow 的 Agent 与 Chat 行为不变）；Phase 3 的端到端链路（真实 `create_app()` + lifespan + SQLite：建图 → 发布 → 202 运行 → 轮询 `node-runs` → resume/cancel/内联 Chat 流）见 `tests/integration/test_workflow_runner.py`。说明：`app/services/**` 与 `app/api/**` 的行覆盖率在本机 coverage 下会漏记"`await` 之后的尾行"（《详细设计》7.2 记录的口径），因此服务层另有直测补充（`tests/integration/test_workflow_runner.py` 直接断言落库结果与 `node_runs` 序列）。
+
+下一步：**Phase 5 RAG / 知识库**（见《详细设计》7.6，M3）。
 
 ---
 
@@ -168,11 +183,13 @@ cd ..\frontend; npm run gen:api
 
 - 单进程 + SQLite，无多实例/横向扩展；不引入 Redis / Celery / PostgreSQL / 向量库集群（SD-8 / SD-9 / SD-11）。
 - 无鉴权（`owner_key` 固定 `local`，SD-3）；请勿直接暴露到公网。
-- Phase 2 起 Agent 可带工具：`tool_ids` 必须指向**存在且 `enabled`** 的工具，否则 `AGENT_INVALID_CONFIG`；`knowledge_base_ids` / `workflow_id` 仍必须为空（Phase 5 / Phase 3，SD-14②）。
+- Agent 可带工具与 Workflow：`tool_ids` 必须指向**存在且 `enabled`** 的工具；`workflow_id` 必须指向**已发布**的 Workflow（否则 `AGENT_INVALID_CONFIG`）；`knowledge_base_ids` 仍必须为空（Phase 5，SD-14②）。
 - 工具执行是**顺序**的（SD-2，同一 step 内逐个调用）；同一工具连续失败 3 次才终止 Run（`TOOL_REPEATED_FAILURE`）。
 - 同一会话同时只允许一个活跃 Run（第二个请求 409）；客户端断开**默认不取消** Run（`DETACH_CANCEL=true` 才取消，SD/3.4）。
 - Prompt 历史只做"变更留档 + 只读列表"，**回滚端点**（`prompt-versions/{version}/activate`）属延后项（《详细设计》7.0.1）。
-- Workflow 不支持并行分支（SD-1）；工具调用顺序执行（SD-2）。
+- Workflow 不支持并行分支（SD-1）；节点**串行**执行；`human` 节点与审批属 Backlog（SD-17）。
+- Phase 3 的 Workflow 里 `retriever` 节点会明确回 `NOT_IMPLEMENTED`（知识库属 Phase 5）：节点默认 `on_error=continue`，错误文本会写进它的 `output_key` 并继续后续节点；`configs/workflows/*.yaml` 的示例图（`research-flow.yaml` / `kb-qa-flow.yaml`）因此在 Phase 5 之前只能跑到"检索失败"分支。
+- Workflow 运行**不返回 SSE**（3.4）：`POST /workflows/{id}/runs` 返回 202，页面按 2s 轮询 `node-runs`；SSE 只在 Chat 内联场景（`agent.workflow_id` 非空）里出现。
 - `python_execute` / `file_write` 默认关闭，需在 `Settings` 显式开启（SD-17）。
 - Memory / MCP / 审批后台 / 评测平台为 Backlog：设计保留在文档中，但**不提供接口、不建空页面**（SD-14②）。
 

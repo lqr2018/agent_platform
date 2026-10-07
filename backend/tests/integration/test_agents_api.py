@@ -121,7 +121,7 @@ async def test_validation_rejects_unknown_provider_and_model(app_client: AsyncCl
 async def test_reference_validation_for_tools_and_workflows(
     app_client: AsyncClient, provider_id: str, db_session: AsyncSession
 ) -> None:
-    """3.2.2 / Phase 2：`tool_ids` 必须指向 enabled 的工具；KB / Workflow 仍未实现（SD-14②）。"""
+    """3.2.2 / Phase 2–3：`tool_ids` 必须指向 enabled 的工具；`workflow_id` 必须存在且已发布。"""
     unknown_id = "01J8Z0000000000000000000T1"
     unknown = await app_client.post(
         "/api/v1/agents",
@@ -160,7 +160,7 @@ async def test_reference_validation_for_tools_and_workflows(
     }
     with_workflow = await app_client.post("/api/v1/agents", json=wf_body)
     assert with_workflow.status_code == 422
-    assert "workflow_id" in with_workflow.json()["error"]["details"]["fields"]
+    assert with_workflow.json()["error"]["details"] == {"field": "workflow_id"}
 
 
 @pytest.mark.asyncio

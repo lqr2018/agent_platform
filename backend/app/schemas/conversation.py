@@ -70,7 +70,11 @@ class MessageRead(BaseModel):
 
 
 class RunRead(BaseModel):
-    """`GET /runs/{run_id}`（3.2.4：含 steps / token / cost）。"""
+    """`GET /runs/{run_id}`（3.2.4：含 steps / token / cost）。
+
+    Phase 3 起 `workflow_run_id` 也在这里返回（`kind=workflow` 时指向 `workflow_runs`，2.6），
+    前端可以从 Run 列表直接跳到 Workflow 运行详情页。
+    """
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -78,6 +82,7 @@ class RunRead(BaseModel):
     kind: str
     agent_id: str | None = None
     conversation_id: str | None = None
+    workflow_run_id: str | None = None
     status: str
     input: dict[str, object] = Field(default_factory=dict)
     output: dict[str, object] = Field(default_factory=dict)

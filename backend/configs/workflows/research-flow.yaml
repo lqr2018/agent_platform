@@ -1,0 +1,72 @@
+# research-flow —— 《详细设计》8.2 的 Demo 1：Research Agent（研究型）
+#
+# 图：start → planner(agent) → search(tool) → router(condition) → reader(retriever) → writer(agent) → end
+#
+# 说明（Phase 3 现状）：
+#
+# - `agent_id` / `tool_name` 是**占位名**：Phase 8 的 `seed_demo` 会按 name 解析成真实 id
+#   （8.1 的 Agent 配置里 `tools: [web_search, ...]` 同理），因此本文件在写库前只做结构校验；
+# - `reader` 是 `retriever` 节点，需要知识库（**Phase 5**）；在 Phase 3 里它由服务层明确
+#   回 `NOT_IMPLEMENTED`，节点默认 `on_error=continue` 会把错误写进 `output_key` 并继续；
+#   想让 Phase 3 就能跑通，把 `reader` 节点删掉（或暂时改成 `agent` 节点）即可。
+version: 1
+workflow:
+  name: research-flow
+  description: "多步研究：规划 → 检索 → 命中判断 → 知识库检索 → 撰写"
+  state_schema:
+    topic: { type: string }
+    plan: { type: string }
+    hits: { type: array }
+    chunks: { type: array }
+    draft: { type: string }
+  definition:
+    nodes:
+      - id: start
+        type: start
+        name: 开始
+        next: planner
+      - id: planner
+        type: agent
+        name: 规划
+        agent_id: research-planner
+        input_template: "{{state.topic}}"
+        output_key: plan
+        next: search
+      - id: search
+        type: tool
+        name: 检索
+        tool_name: web_search
+        arguments_template:
+          query: "{{state.plan}}"
+        output_key: hits
+        on_error: continue
+        next: router
+      - id: router
+        type: condition
+        name: 是否命中
+        branches:
+          - when: len(state.hits) > 0
+            next: reader
+        default_next: end
+      - id: reader
+        type: retriever
+        name: 知识库检索
+        kb_id: product-docs
+        query_template: "{{state.plan}}"
+        output_key: chunks
+        on_error: continue
+        next: writer
+      - id: writer
+        type: agent
+        name: 撰写
+        agent_id: research-writer
+        input_template: "问题：{{state.topic}}\n线索：{{nodes.search.output}}\n知识库：{{nodes.reader.output}}"
+        output_key: draft
+        next: end
+      - id: end
+        type: end
+        name: 结束
+    config:
+      max_steps: 30
+      recursion_limit: 50
+      timeout_seconds: 600

@@ -62,6 +62,16 @@ class ErrorCode(StrEnum):
     TOOL_OUTPUT_TOO_LARGE = "TOOL_OUTPUT_TOO_LARGE"
     TOOL_REPEATED_FAILURE = "TOOL_REPEATED_FAILURE"
 
+    # ---- Workflow（2.9 / 4.5，Phase 3） ----
+    WORKFLOW_NOT_FOUND = "WORKFLOW_NOT_FOUND"
+    WORKFLOW_INVALID_GRAPH = "WORKFLOW_INVALID_GRAPH"
+    WORKFLOW_RUN_NOT_FOUND = "WORKFLOW_RUN_NOT_FOUND"
+    WORKFLOW_RUN_NOT_RESUMABLE = "WORKFLOW_RUN_NOT_RESUMABLE"
+    WORKFLOW_NODE_FAILED = "WORKFLOW_NODE_FAILED"
+    WORKFLOW_MAX_STEPS_EXCEEDED = "WORKFLOW_MAX_STEPS_EXCEEDED"
+    RUN_ABANDONED = "RUN_ABANDONED"
+    """6.3 第 3 条：进程重启后收敛的孤儿 Run / WorkflowRun（附录 A 的阶段列为 3）。"""
+
 
 class AppError(Exception):
     """所有可预期错误的基类（1.6）。
@@ -332,6 +342,76 @@ class ToolRepeatedFailureError(AppError):
 
     code = ErrorCode.TOOL_REPEATED_FAILURE
     message = "The same tool failed repeatedly"
+
+
+# ---- Phase 3：Workflow（2.9 / 4.5） ----
+class WorkflowNotFoundError(NotFoundError):
+    """Workflow 不存在（404，附录 A）。"""
+
+    code = ErrorCode.WORKFLOW_NOT_FOUND
+    message = "Workflow not found"
+
+
+class WorkflowInvalidGraphError(ValidationError):
+    """图静态校验失败（422，4.5.1）。
+
+    `details["errors"]` 是**错误项清单**（每项 `{code, message, node_id?}`）——
+    并行出边的单项 `code=PARALLEL_EDGES_NOT_SUPPORTED`（SD-1）；
+    `details["start_node_id"]` 在校验通过时也存在，方便前端直接渲染图。
+    """
+
+    code = ErrorCode.WORKFLOW_INVALID_GRAPH
+    message = "Workflow definition is not a valid graph"
+
+
+class WorkflowRunNotFoundError(NotFoundError):
+    """WorkflowRun 不存在（404，附录 A）。"""
+
+    code = ErrorCode.WORKFLOW_RUN_NOT_FOUND
+    message = "Workflow run not found"
+
+
+class WorkflowRunNotResumableError(ConflictError):
+    """不在 4.5.4 的两类可续跑场景内（409，附录 A）。"""
+
+    code = ErrorCode.WORKFLOW_RUN_NOT_RESUMABLE
+    message = "Workflow run is not resumable"
+
+
+class WorkflowNodeFailedError(AppError):
+    """节点失败且 `on_error=fail`（500，4.5.2）。"""
+
+    code = ErrorCode.WORKFLOW_NODE_FAILED
+    http_status = 500
+    message = "Workflow node failed"
+
+
+class WorkflowMaxStepsExceededError(AppError):
+    """超 `config.max_steps` / `config.recursion_limit`（500，4.5.2）。"""
+
+    code = ErrorCode.WORKFLOW_MAX_STEPS_EXCEEDED
+    http_status = 500
+    message = "Workflow exceeded the configured step limit"
+
+
+class WorkflowNodeError(AppError):
+    """节点内部失败，**保留原始错误码**上抛给引擎按 `on_error` 处理（4.5.2）。
+
+    例：`agent` 节点里 LLM 超时 → `MODEL_TIMEOUT`；`tool` 节点里工具超时 → `TOOL_TIMEOUT`。
+    与 `WorkflowNodeFailedError`（引擎级的"节点失败"）的分工：
+
+    - `WorkflowNodeError`：**服务层**把内部结果（Agent Run 失败 / 工具失败）转成异常时用；
+    - `WorkflowNodeFailedError`：引擎发现"节点无法执行"（未注入 runner / 模板非法 / 分支未命中）时用。
+    两者都会让 `node_runs.error_code` 记录真实原因。
+    """
+
+    http_status = 500
+
+    def __init__(
+        self, code: ErrorCode, message: str | None = None, *, details: Mapping[str, Any] | None = None
+    ) -> None:
+        self.code = code
+        super().__init__(message, details=details)
 
 
 HTTP_STATUS_TO_CODE: Mapping[int, ErrorCode] = {

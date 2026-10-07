@@ -2,8 +2,8 @@
 
 - `model` 拆为 `model_provider_id` + `model_name` + `model_params`（2.4）；
 - `memory_config` 的默认值只生效 `short_term`（SD-15）；`long_term` 子字段保留但不生效；
-- `workflow_id`：**Phase 1 只建列（无 FK，且必须为 NULL）**，`workflows` 表在 Phase 3 才出现，
-  届时用 batch 迁移补 FK 约束 —— 这样前端 DTO 形状从 Phase 1 起稳定（2.4 的列在 Phase 1 已齐）。
+- `workflow_id`：Phase 1 只建列，**Phase 3 已用 batch 迁移补上 FK**（`workflows.id`，`ON DELETE SET NULL`：
+  删 Workflow 不应连带删 Agent，Agent 回落到"直接跑 AgentRuntime"的语义，4.4.4）。
 """
 
 from __future__ import annotations
@@ -58,7 +58,11 @@ class Agent(Base, TimestampMixin):
     tool_ids: Mapped[JSONList]
     knowledge_base_ids: Mapped[JSONList]
     memory_config: Mapped[JSONDict] = mapped_column(default=default_memory_config)
-    workflow_id: Mapped[str | None] = mapped_column(String(26), nullable=True)
+    workflow_id: Mapped[str | None] = mapped_column(
+        String(26),
+        ForeignKey("workflows.id", ondelete="SET NULL", name="fk_agents_workflow_id_workflows"),
+        nullable=True,
+    )
     max_steps: Mapped[int] = mapped_column(Integer, default=8, nullable=False)
     timeout_seconds: Mapped[int] = mapped_column(Integer, default=180, nullable=False)
     tags: Mapped[JSONList]

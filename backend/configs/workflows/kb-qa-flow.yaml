@@ -1,0 +1,62 @@
+# kb-qa-flow —— 知识库问答的最小图（对应《详细设计》8.4 Demo 3 的知识库链路）
+#
+# 图：start → retrieve(retriever) → router(condition) → answer(agent) → end
+#                              └─ 未命中 → fallback(agent) → end
+#
+# 说明（Phase 3 现状）：
+#
+# - `retriever` 节点需要知识库（**Phase 5**），Phase 3 运行时会明确回 `NOT_IMPLEMENTED`
+#   （节点 `on_error=continue` → 错误文本进 state，`router` 因此走"未命中"分支）；
+# - Phase 5 到位后本图无需改动即可给出带引用的回答（8.4 的"未命中必须说不编造"由
+#   `fallback` 分支保证）；
+# - `kb_id` / `agent_id` 是占位，写库时由 `seed_demo` 解析（8.1）。
+version: 1
+workflow:
+  name: kb-qa-flow
+  description: "知识库问答：检索 → 命中判断 → 带引用回答 / 明确拒答"
+  state_schema:
+    question: { type: string }
+    chunks: { type: array }
+    answer: { type: string }
+  definition:
+    nodes:
+      - id: start
+        type: start
+        name: 开始
+        next: retrieve
+      - id: retrieve
+        type: retriever
+        name: 检索
+        kb_id: product-docs
+        query_template: "{{state.question}}"
+        output_key: chunks
+        on_error: continue
+        next: router
+      - id: router
+        type: condition
+        name: 是否命中
+        branches:
+          - when: len(state.chunks) > 0
+            next: answer
+        default_next: fallback
+      - id: answer
+        type: agent
+        name: 回答
+        agent_id: kb-assistant
+        input_template: "问题：{{state.question}}\n资料：{{nodes.retrieve.output}}"
+        output_key: answer
+        next: end
+      - id: fallback
+        type: agent
+        name: 拒答
+        agent_id: kb-assistant
+        input_template: "问题：{{state.question}}\n资料为空：请明确回答“知识库中没有检索到相关内容”，不要编造。"
+        output_key: answer
+        next: end
+      - id: end
+        type: end
+        name: 结束
+    config:
+      max_steps: 20
+      recursion_limit: 30
+      timeout_seconds: 300

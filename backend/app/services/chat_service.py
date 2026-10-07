@@ -16,7 +16,6 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Any
 
-from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import ids
@@ -28,12 +27,15 @@ from app.core.events import (
     RunFailedPayload,
     RunStartedPayload,
     SseEventType,
+    SseQueueItem,
 )
 from app.core.logging import get_logger
+from app.db.models import Agent
 from app.db.models.agent import AGENT_STATUS_ENABLED
 from app.db.models.conversation import message_meta
+from app.db.models.workflow import TRIGGER_API
 from app.db.session import get_sessionmaker
-from app.runtime.agent.emitter import EventEmitter, EventPayload
+from app.runtime.agent.emitter import EventEmitter, QueueEmitter
 from app.runtime.agent.runtime import AgentRuntime
 from app.runtime.agent.state import AgentSpec, RunResult
 from app.runtime.llm.base import ProviderConfig
@@ -46,22 +48,13 @@ from app.services import (
     run_service,
     tool_service,
     trace_service,
+    workflow_service,
 )
 
 logger = get_logger(__name__)
 
-QueueItem = tuple[SseEventType, dict[str, Any]] | None
-"""队列元素：`(事件, payload)`；`None` 是"流结束"哨兵（由 `chat.py` 追加 `done` 之外的最后一步）。"""
-
-
-class QueueEmitter:
-    """把 `AgentRuntime` 的事件推进 asyncio 队列（4.4.1 的 `EventEmitter` 实现之一）。"""
-
-    def __init__(self, queue: asyncio.Queue[QueueItem]) -> None:
-        self._queue = queue
-
-    async def emit(self, event: SseEventType, payload: EventPayload = None) -> None:
-        await self._queue.put((event, _payload_dict(payload)))
+QueueItem = SseQueueItem
+"""队列元素：`(事件, payload)`；`None` 是"流结束"哨兵（形状定义在 `core/events.py`）。"""
 
 
 class ChatRun:
@@ -101,7 +94,11 @@ async def start_chat(
     content: str,
     registry: run_service.RunRegistry | None = None,
 ) -> ChatRun:
-    """请求阶段：校验 → 落库 → 起后台任务（返回句柄供 SSE 端消费）。"""
+    """请求阶段：校验 → 落库 → 起后台任务（返回句柄供 SSE 端消费）。
+
+    4.4.4 的分叉：`agent.workflow_id` 非空 → 由 `WorkflowEngine` 驱动（Chat 内联 Workflow），
+    事件 13/14 走同一条 SSE（3.4）；为空 → 既有的 `AgentRuntime` 直跑路径。
+    """
     conversation = await conversation_service.get_conversation(session, conversation_id)
     agent = await agent_service.get_agent(session, conversation.agent_id)
     if agent.status != AGENT_STATUS_ENABLED:
@@ -109,9 +106,18 @@ async def start_chat(
             f"Agent '{agent.name}' is disabled and cannot start new runs",
             details={"agent_id": agent.id, "status": agent.status},
         )
+    run_registry = registry or run_service.get_run_registry(settings)
+    if agent.workflow_id:
+        return await _start_inline_workflow(
+            session,
+            settings,
+            conversation_id=conversation_id,
+            agent=agent,
+            content=content,
+            registry=run_registry,
+        )
     provider = await model_provider_service.get_provider(session, agent.model_provider_id)
 
-    run_registry = registry or run_service.get_run_registry(settings)
     run_id = ids.new_ulid()
     trace_id = ids.new_trace_id()
     cancel_event = run_registry.begin(run_id=run_id, conversation_id=conversation_id)
@@ -162,6 +168,60 @@ async def start_chat(
         queue=queue,
         cancel_event=cancel_event,
         task=task,
+    )
+
+
+async def _start_inline_workflow(
+    session: AsyncSession,
+    settings: Settings,
+    *,
+    conversation_id: str,
+    agent: Agent,
+    content: str,
+    registry: run_service.RunRegistry,
+) -> ChatRun:
+    """Chat 内联 Workflow（4.4.4）：Agent 绑定了 Workflow → 由 `SimpleEngine` 驱动该图。
+
+    - user 消息照常落 `messages`（会话是事实来源），`agent` 节点产出的 assistant 消息也进同一会话；
+    - `runs.kind=workflow` + `runs.workflow_run_id`，`workflow_runs.trigger=api`；
+    - 初始 state 注入 `input`（用户消息）/ `conversation_id` / `agent_id`，图里的节点用
+      `{{state.input}}` 之类的模板取用（4.5.2）；
+    - 事件流与普通 Chat 完全同构（`run.started` → `workflow.node.*` → `message.*` → 终态），
+      因此 `api/v1/chat.py` 与前端不需要任何特判（3.4 事件 13/14 的用途）。
+    """
+    workflow = await workflow_service.get_workflow(session, agent.workflow_id or "")
+    user_message = await conversation_service.append_message(
+        session,
+        conversation_id=conversation_id,
+        role=MessageRole.USER,
+        content=content,
+        meta=message_meta(
+            agent_prompt_version=agent.prompt_version,
+            tools=list(agent.tool_ids or ()),
+            kb_ids=list(agent.knowledge_base_ids or ()),
+        ),
+    )
+    queue: asyncio.Queue[QueueItem] = asyncio.Queue()
+    handle = await workflow_service.start_run(
+        session,
+        settings,
+        workflow=workflow,
+        payload={"input": content, "conversation_id": conversation_id, "agent_id": agent.id},
+        trigger=TRIGGER_API,
+        agent_id=agent.id,
+        conversation_id=conversation_id,
+        emit_queue=queue,
+        registry=registry,
+        run_input={"user_message_id": user_message.id, "text": content},
+    )
+    logger.info("chat.inline_workflow_started", workflow_id=workflow.id, run_id=handle.api_run_id)
+    return ChatRun(
+        run_id=handle.api_run_id,
+        trace_id=handle.trace_id,
+        conversation_id=conversation_id,
+        queue=queue,
+        cancel_event=handle.cancel_event,
+        task=handle.task,
     )
 
 
@@ -323,13 +383,6 @@ def _status_for(error: AppError) -> RunStatus:
 def _span_status_for(status: RunStatus) -> SpanStatus:
     """`RunStatus` → 根 span 的 `SpanStatus`（2.11）。"""
     return SpanStatus.OK if status == RunStatus.SUCCEEDED else SpanStatus.ERROR
-
-
-def _payload_dict(payload: EventPayload) -> dict[str, Any]:
-    """事件 payload → 纯 dict（`BaseModel` 走 `model_dump(mode="json")`）。"""
-    if isinstance(payload, BaseModel):
-        return payload.model_dump(mode="json")
-    return dict(payload or {})
 
 
 def _utcnow() -> datetime:

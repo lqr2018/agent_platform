@@ -21,6 +21,8 @@ dependencies = [
     "cryptography>=42",
     # Phase 1：OpenAI-compatible Provider 与 `scripts/*` 的 HTTP 客户端（4.1.2 第 1 条：不用 OpenAI SDK）
     "httpx>=0.27",
+    # Phase 3：`configs/workflows/*.yaml` 的装载（7.4 交付物 / 8.1）；Phase 8 的 `seed_demo` 复用
+    "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]
@@ -115,3 +117,9 @@ strict = true
 [[tool.mypy.overrides]]
 module = ["app.api.*", "app.main"]
 disallow_untyped_decorators = false
+
+# `yaml`（PyYAML）不带类型标注，且只有 `workflow_config.py` 用到 `safe_load`
+# —— 装 `types-PyYAML` 会引入一个必须与 CI 同版本的额外构件，这里用最小豁免代替。
+[[tool.mypy.overrides]]
+module = ["yaml"]
+ignore_missing_imports = true

@@ -3,8 +3,8 @@
 - `messages` 的 `(conversation_id, seq)` UNIQUE：既是会话回放顺序，也是幂等兜底（1.5.5）；
 - `runs` 是统一执行实例（chat / workflow / eval），Chat 每轮消息一个 Run；
 - `runs` 行在 Run 开始时即插入（`status=running`），崩溃后能查到"孤儿 Run"（2.6）；
-- `workflow_run_id` / `eval_result_id` 属 Phase 3 / Backlog 的关联列，**Phase 1 只建列不建 FK**
-  （被引用表尚不存在），避免悬空外键。
+- `workflow_run_id` / `eval_result_id`：Phase 1 只建列；`workflow_run_id` 的 FK 在 Phase 3 用 batch 迁移补上，
+  `eval_result_id` 仍留待 Backlog 迭代 D（SD-18）。
 """
 
 from __future__ import annotations
@@ -57,7 +57,11 @@ class Run(Base):
     conversation_id: Mapped[str | None] = mapped_column(
         String(26), ForeignKey("conversations.id", ondelete="CASCADE"), nullable=True
     )
-    workflow_run_id: Mapped[str | None] = mapped_column(String(26), nullable=True)
+    workflow_run_id: Mapped[str | None] = mapped_column(
+        String(26),
+        ForeignKey("workflow_runs.id", ondelete="SET NULL", name="fk_runs_workflow_run_id_workflow_runs"),
+        nullable=True,
+    )
     eval_result_id: Mapped[str | None] = mapped_column(String(26), nullable=True)
     status: Mapped[str] = mapped_column(String(16), default=RunStatus.PENDING, nullable=False)
     input: Mapped[JSONDict]
