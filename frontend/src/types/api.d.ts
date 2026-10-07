@@ -247,7 +247,13 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** 取消运行中的 Run */
+        /**
+         * 取消运行中的 Run
+         * @description 取消（3.2.4 / 3.1）。
+         *
+         *     `runs.kind=workflow` 的行转交 `workflow_service.cancel_run` —— 与
+         *     `POST /workflow-runs/{id}/cancel` 是同一实现，保证 `workflow_runs` 与 `runs` 两行一起收敛。
+         */
         post: operations["cancel_run_api_v1_runs__run_id__cancel_post"];
         delete?: never;
         options?: never;

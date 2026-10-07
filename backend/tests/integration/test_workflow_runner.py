@@ -314,6 +314,51 @@ async def test_cancel_active_run_only_signals(db_session: AsyncSession) -> None:
     registry.finish(api_run_id)
 
 
+async def test_generic_run_cancel_delegates_to_workflow_run(app_client: AsyncClient, db_session: AsyncSession) -> None:
+    """3.1：取消有两个入口 —— `/runs/{id}/cancel`（通用）对 `kind=workflow` 的行必须与
+    `/workflow-runs/{id}/cancel` 行为一致（两行一起收敛）。"""
+    provider = await create_fake_provider(db_session, name="delegate-provider")
+    planner = await create_agent(app_client, provider_id=provider.id, name="delegate-planner")
+    writer = await create_agent(app_client, provider_id=provider.id, name="delegate-writer")
+    agents = {"planner": str(planner["id"]), "writer": str(writer["id"])}
+    workflow = await create_workflow(app_client, agents, name="delegate")
+    workflow_run = WorkflowRun(
+        workflow_id=workflow["id"],
+        workflow_version=1,
+        definition_snapshot=workflow["definition"],
+        status="running",
+        trigger="manual",
+        input={},
+        output={},
+        state={},
+        checkpoint={},
+    )
+    db_session.add(workflow_run)
+    await db_session.commit()
+    await db_session.refresh(workflow_run)
+    api_run_id = "01J8Z000000000000000000AR4"
+    db_session.add(
+        Run(
+            id=api_run_id,
+            kind="workflow",
+            workflow_run_id=workflow_run.id,
+            status="running",
+            input={},
+            output={},
+            started_at=datetime.now(UTC).replace(tzinfo=None),
+        )
+    )
+    await db_session.commit()
+
+    response = await app_client.post(f"/api/v1/runs/{api_run_id}/cancel")
+    assert response.status_code == 200, response.text
+    assert response.json()["data"]["status"] == "canceled"
+
+    await db_session.refresh(workflow_run)
+    assert workflow_run.status == "canceled"
+    assert workflow_run.error_code == "RUN_CANCELED"
+
+
 async def test_orphan_convergence_marks_stale_running_rows(
     app_client: AsyncClient, db_session: AsyncSession, tmp_sqlite: Any
 ) -> None:

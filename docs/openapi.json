@@ -4965,6 +4965,7 @@
     },
     "/api/v1/runs/{run_id}/cancel": {
       "post": {
+        "description": "取消（3.2.4 / 3.1）。\n\n`runs.kind=workflow` 的行转交 `workflow_service.cancel_run` —— 与\n`POST /workflow-runs/{id}/cancel` 是同一实现，保证 `workflow_runs` 与 `runs` 两行一起收敛。",
         "operationId": "cancel_run_api_v1_runs__run_id__cancel_post",
         "parameters": [
           {

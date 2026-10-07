@@ -51,8 +51,18 @@ async def get_run(run_id: str, session: SessionDep) -> ApiResponse[RunRead]:
 
 
 @router.post("/{run_id}/cancel", response_model=ApiResponse[RunRead], summary="取消运行中的 Run")
-async def cancel_run(run_id: str, session: SessionDep) -> ApiResponse[RunRead]:
-    run = await run_service.cancel_run(session, run_id)
+async def cancel_run(run_id: str, session: SessionDep, settings: SettingsDep) -> ApiResponse[RunRead]:
+    """取消（3.2.4 / 3.1）。
+
+    `runs.kind=workflow` 的行转交 `workflow_service.cancel_run` —— 与
+    `POST /workflow-runs/{id}/cancel` 是同一实现，保证 `workflow_runs` 与 `runs` 两行一起收敛。
+    """
+    run = await run_service.get_run(session, run_id)
+    if run.workflow_run_id:
+        await workflow_service.cancel_run(session, run.workflow_run_id, settings=settings)
+        await session.refresh(run)
+    else:
+        run = await run_service.cancel_run(session, run_id)
     return ApiResponse[RunRead].of(RunRead.model_validate(run))
 
 

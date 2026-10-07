@@ -235,7 +235,11 @@ async def finish_run(
 
 
 async def cancel_run(session: AsyncSession, run_id: str, *, registry: RunRegistry | None = None) -> Run:
-    """取消（3.2.4）：活跃 Run 只置取消信号（由运行中的任务收敛终态）；孤儿 Run 直接落 `canceled`。"""
+    """取消（3.2.4）：活跃 Run 只置取消信号（由运行中的任务收敛终态）；孤儿 Run 直接落 `canceled`。
+
+    `kind=workflow` 的行由**路由层**转交 `workflow_service.cancel_run`（见 `api/v1/runs.py`），
+    避免 `services` 内部循环依赖（1.2）。
+    """
     run = await get_run(session, run_id)
     if run.status in TERMINAL_STATUSES:
         raise RunAlreadyFinishedError(
