@@ -5,6 +5,7 @@ import {
   MessageOutlined,
   RobotOutlined,
   ShareAltOutlined,
+  ToolOutlined,
 } from "@ant-design/icons";
 import { Layout, Menu, Typography } from "antd";
 import { Link, Outlet, useLocation } from "react-router-dom";
@@ -16,8 +17,9 @@ const { Header, Sider, Content } = Layout;
 /**
  * 布局壳（详细设计 5.2 的菜单规则）。
  *
- * 只列**已实现**的页面：M1 = 总览 / Agent / 模型 / Chat / Trace；
+ * 只列**已实现**的页面：M1 = 总览 / Agent / 模型 / Chat / Trace；M2 = 工具；
  * Backlog 页面（记忆 / MCP / 评测台）不出现（SD-14②），是否显示入口由 `/api/v1/meta.features` 驱动。
+ * Workflow（Phase 3）与知识库（Phase 5）尚未实现 → 只留一条 disabled 的占位，不建空路由。
  */
 export default function AppLayout() {
   const location = useLocation();
@@ -48,12 +50,13 @@ export default function AppLayout() {
               { key: "/", icon: <DashboardOutlined />, label: <Link to="/">总览</Link> },
               { key: "/agents", icon: <RobotOutlined />, label: <Link to="/agents">Agent</Link> },
               { key: "/models", icon: <ApiOutlined />, label: <Link to="/models">模型</Link> },
+              { key: "/tools", icon: <ToolOutlined />, label: <Link to="/tools">工具</Link> },
               { key: "/chat", icon: <MessageOutlined />, label: <Link to="/chat">Chat</Link> },
               { key: "/traces", icon: <ShareAltOutlined />, label: <Link to="/traces">Trace</Link> },
               {
-                key: "phase2",
+                key: "phase3",
                 icon: <ExperimentOutlined />,
-                label: "工具 / Workflow（Phase 2–3）",
+                label: "Workflow / 知识库（Phase 3 / 5）",
                 disabled: true,
               },
             ]}

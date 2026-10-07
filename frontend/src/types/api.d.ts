@@ -305,7 +305,14 @@ export interface paths {
          */
         get: operations["list_tools_api_v1_tools_get"];
         put?: never;
-        post?: never;
+        /**
+         * 新建 api 类型工具
+         * @description 只建 `api` 类型（`tool_type` 收口为 `"api"`，其余取值 Pydantic 直接 422）。
+         *
+         *     - 名称与内置工具（或既有工具）重名 → `CONFLICT`（409）；
+         *     - `http_config.url` 缺失 / `method` 不在白名单 → `VALIDATION_ERROR`（422）。
+         */
+        post: operations["create_tool_api_v1_tools_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -326,6 +333,37 @@ export interface paths {
         get: operations["get_tool_api_v1_tools__tool_id__get"];
         put?: never;
         post?: never;
+        /**
+         * 删除工具（内置禁删）
+         * @description `is_system=true` → `CONFLICT`（409）；历史 `tool_invocations` 的 `tool_id` 置空（2.5）。
+         */
+        delete: operations["delete_tool_api_v1_tools__tool_id__delete"];
+        options?: never;
+        head?: never;
+        /**
+         * 更新工具（内置只允许 status / permission_config / tags）
+         * @description 2.5：内置工具"可禁用 / 可改权限"；改代码属地的列 → `VALIDATION_ERROR`（422）。
+         */
+        patch: operations["update_tool_api_v1_tools__tool_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/tools/{tool_id}/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * 直接执行一次（跳过 LLM）
+         * @description 请求体 `{arguments: {...}}` 可省略（等价于 `{}`）。
+         *
+         *     执行失败（参数非法 / 被拒 / 沙箱越界 / 超时）沿 `ProviderTestResult` 的先例回 `200 + ok=false`，
+         *     错误码与消息直接来自九步流水线，便于运营在页面上定位。
+         */
+        post: operations["run_tool_test_api_v1_tools__tool_id__test_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -628,6 +666,11 @@ export interface components {
         /** ApiResponse[ToolDetail] */
         ApiResponse_ToolDetail_: {
             data: components["schemas"]["ToolDetail"];
+            meta: components["schemas"]["ResponseMeta"];
+        };
+        /** ApiResponse[ToolTestResult] */
+        ApiResponse_ToolTestResult_: {
+            data: components["schemas"]["ToolTestResult"];
             meta: components["schemas"]["ResponseMeta"];
         };
         /** ApiResponse[TraceDetail] */
@@ -938,6 +981,11 @@ export interface components {
             /** Output Price Per 1K Usd */
             output_price_per_1k_usd?: number | null;
         };
+        /**
+         * PermissionLevel
+         * @enum {string}
+         */
+        PermissionLevel: "safe" | "guarded" | "dangerous";
         /** ProviderCreate */
         ProviderCreate: {
             /** Api Key */
@@ -1347,6 +1395,54 @@ export interface components {
             trace_id: string;
         };
         /**
+         * ToolCreate
+         * @description `POST /tools`（3.2.3）：**只建 `api` 类型**。
+         *
+         *     `builtin` 工具由迁移 `0003` + 启动对齐维护、`mcp` 属 Backlog 迭代 B（SD-16），
+         *     因此 `tool_type` 用 `Literal["api"]` 收口（其余取值由 Pydantic 直接 422）。
+         */
+        ToolCreate: {
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /**
+             * Display Name
+             * @default
+             */
+            display_name: string;
+            /** Http Config */
+            http_config?: {
+                [key: string]: unknown;
+            };
+            /** Input Schema */
+            input_schema?: {
+                [key: string]: unknown;
+            };
+            /** Name */
+            name: string;
+            /** Output Schema */
+            output_schema?: {
+                [key: string]: unknown;
+            };
+            permission_config?: components["schemas"]["ToolPermissionConfigDTO"];
+            /**
+             * Status
+             * @default enabled
+             * @enum {string}
+             */
+            status: "enabled" | "disabled";
+            /** Tags */
+            tags?: string[];
+            /**
+             * Tool Type
+             * @default api
+             * @constant
+             */
+            tool_type: "api";
+        };
+        /**
          * ToolDetail
          * @description 工具详情：附加 `api` 类型的 `http_config`（2.5）。
          */
@@ -1483,6 +1579,46 @@ export interface components {
             trace_id: string;
         };
         /**
+         * ToolPermissionConfigDTO
+         * @description `permission_config` 的**请求侧**形态（2.5 的完整结构）。
+         *
+         *     字段与 runtime 的 `ToolPermissionConfig` 一一对应（由 `tests/unit/test_tool_schemas.py` 钉住）；
+         *     `extra="ignore"` 让后加的运行时字段不会让旧客户端请求 422。
+         */
+        ToolPermissionConfigDTO: {
+            /**
+             * Allow Network
+             * @default false
+             */
+            allow_network: boolean;
+            /** Allowed Hosts */
+            allowed_hosts?: string[];
+            /** Allowed Paths */
+            allowed_paths?: string[];
+            /** @default safe */
+            level: components["schemas"]["PermissionLevel"];
+            /**
+             * Max Calls Per Run
+             * @default 20
+             */
+            max_calls_per_run: number;
+            /**
+             * Max Output Bytes
+             * @default 65536
+             */
+            max_output_bytes: number;
+            /**
+             * Require Approval
+             * @default false
+             */
+            require_approval: boolean;
+            /**
+             * Timeout Seconds
+             * @default 15
+             */
+            timeout_seconds: number;
+        };
+        /**
          * ToolRead
          * @description `tools` 行（2.5，前端工具管理页与 Chat 工具卡片的展示字段）。
          */
@@ -1536,6 +1672,93 @@ export interface components {
             tool_type: string;
             /** Updated At */
             updated_at: string;
+        };
+        /**
+         * ToolTestRequest
+         * @description `POST /tools/{id}/test` 的请求（3.2.3：直接执行一次，跳过 LLM）。
+         */
+        ToolTestRequest: {
+            /** Arguments */
+            arguments?: {
+                [key: string]: unknown;
+            };
+        };
+        /**
+         * ToolTestResult
+         * @description `POST /tools/{id}/test` 的结果。
+         *
+         *     与 `ProviderTestResult` 同风格：**执行失败也是 HTTP 200 + `ok=false`**（`3.2.2` 的先例），
+         *     因为这是"运营试跑"而不是业务调用 —— 调用侧的失败语义由 `tool_invocations` 承载。
+         */
+        ToolTestResult: {
+            /** Details */
+            details?: {
+                [key: string]: unknown;
+            };
+            /** Error Code */
+            error_code?: string | null;
+            /** Error Message */
+            error_message?: string | null;
+            /**
+             * Latency Ms
+             * @default 0
+             */
+            latency_ms: number;
+            /** Ok */
+            ok: boolean;
+            /**
+             * Permission Decision
+             * @default allow
+             */
+            permission_decision: string;
+            /** Result */
+            result?: string | null;
+            /**
+             * Status
+             * @default succeeded
+             */
+            status: string;
+            /** Tool Id */
+            tool_id: string;
+            /** Tool Name */
+            tool_name: string;
+            /**
+             * Truncated
+             * @default false
+             */
+            truncated: boolean;
+        };
+        /**
+         * ToolUpdate
+         * @description `PATCH /tools/{id}`：只传需要改的字段（同 `ProviderUpdate` 的约定）。
+         *
+         *     内置（`is_system=true`）行只接受 `status` / `permission_config` / `tags`
+         *     —— 其余列是**代码定义**（4.2.2 的单一来源），改了也会被启动对齐覆盖（服务层给出 422）。
+         */
+        ToolUpdate: {
+            /** Description */
+            description?: string | null;
+            /** Display Name */
+            display_name?: string | null;
+            /** Http Config */
+            http_config?: {
+                [key: string]: unknown;
+            } | null;
+            /** Input Schema */
+            input_schema?: {
+                [key: string]: unknown;
+            } | null;
+            /** Name */
+            name?: string | null;
+            /** Output Schema */
+            output_schema?: {
+                [key: string]: unknown;
+            } | null;
+            permission_config?: components["schemas"]["ToolPermissionConfigDTO"] | null;
+            /** Status */
+            status?: ("enabled" | "disabled") | null;
+            /** Tags */
+            tags?: string[] | null;
         };
         /**
          * TraceDetail
@@ -2487,6 +2710,39 @@ export interface operations {
             };
         };
     };
+    create_tool_api_v1_tools_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ToolCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_ToolDetail_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_tool_api_v1_tools__tool_id__get: {
         parameters: {
             query?: never;
@@ -2505,6 +2761,105 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiResponse_ToolDetail_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_tool_api_v1_tools__tool_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tool_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_tool_api_v1_tools__tool_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tool_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ToolUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_ToolDetail_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    run_tool_test_api_v1_tools__tool_id__test_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                tool_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": components["schemas"]["ToolTestRequest"] | null;
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_ToolTestResult_"];
                 };
             };
             /** @description Validation Error */

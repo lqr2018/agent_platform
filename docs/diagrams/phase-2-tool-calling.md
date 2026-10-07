@@ -79,3 +79,23 @@ dangerous / require_approval=true
 ```
 
 `runtime/agent/stop.py::StopReason` 为此新增 `REPEATED_TOOL_FAILURE` 取值（错误映射集中在 `error_for`）。
+
+## 5. 运营侧端点与前端落点（3.2.3 / 5.1 / 5.2，Phase 2 收尾）
+
+```text
+/tools 页面（pages/ToolsPage.tsx）        api/tools.ts        app/api/v1/tools.py
+  列表（?tool_type=&status=&q=）  ────────> listTools        GET    /tools
+  详情抽屉（schema / http_config）────────> getTool          GET    /tools/{id}
+  新建 api 工具（JSON 文本框）    ────────> createTool       POST   /tools          （201 / 409 重名 / 422 配置）
+  启停 · 权限编辑                  ────────> updateTool       PATCH  /tools/{id}    （内置只放行 status/permission/tags）
+  删除                             ────────> deleteTool       DELETE /tools/{id}    （内置 → 409）
+  "测试"按钮                       ────────> testTool         POST   /tools/{id}/test
+Chat 工具卡片（components/chat/ToolCallCard.tsx） ← chatStore.tools ← SSE 事件 6/7/8
+```
+
+- `POST /tools/{id}/test` 与运行期的**唯一差别**是不落 `tool_invocations`：它复用同一个 `ToolExecutor`
+  （九步全走）与同一份 `permission_config`，所以"试跑通过"≈"运行期可通过"；失败回 `200 + ok=false`
+  （`details.reason` 直接给出 `SWITCH_DISABLED` / `DANGEROUS_TOOL_DISABLED` 之类的判定依据）；
+- 内置工具的定义以代码为准（4.2.2），因此页面只给"禁用 / 改权限 / 标签"三个入口，其余字段只读
+  （后端也会 422 `BUILTIN_DEFINITION_IS_CODE_OWNED`）—— 不会出现"改成功了、下次启动又被对齐抹掉"的假象；
+- Chat 侧的工具卡片与 `MessageBubble` 分开渲染：消息是"内容"，工具调用是"过程"（可折叠在消息流之后）。

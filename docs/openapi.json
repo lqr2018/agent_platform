@@ -585,6 +585,22 @@
         "title": "ApiResponse[ToolDetail]",
         "type": "object"
       },
+      "ApiResponse_ToolTestResult_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/ToolTestResult"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/ResponseMeta"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "ApiResponse[ToolTestResult]",
+        "type": "object"
+      },
       "ApiResponse_TraceDetail_": {
         "properties": {
           "data": {
@@ -1295,6 +1311,15 @@
         ],
         "title": "ModelEntry",
         "type": "object"
+      },
+      "PermissionLevel": {
+        "enum": [
+          "safe",
+          "guarded",
+          "dangerous"
+        ],
+        "title": "PermissionLevel",
+        "type": "string"
       },
       "ProviderCreate": {
         "properties": {
@@ -2260,6 +2285,75 @@
         "title": "SpanSummary",
         "type": "object"
       },
+      "ToolCreate": {
+        "description": "`POST /tools`（3.2.3）：**只建 `api` 类型**。\n\n`builtin` 工具由迁移 `0003` + 启动对齐维护、`mcp` 属 Backlog 迭代 B（SD-16），\n因此 `tool_type` 用 `Literal[\"api\"]` 收口（其余取值由 Pydantic 直接 422）。",
+        "properties": {
+          "description": {
+            "default": "",
+            "maxLength": 4000,
+            "title": "Description",
+            "type": "string"
+          },
+          "display_name": {
+            "default": "",
+            "maxLength": 120,
+            "title": "Display Name",
+            "type": "string"
+          },
+          "http_config": {
+            "additionalProperties": true,
+            "title": "Http Config",
+            "type": "object"
+          },
+          "input_schema": {
+            "additionalProperties": true,
+            "title": "Input Schema",
+            "type": "object"
+          },
+          "name": {
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[a-z][a-z0-9_]{0,63}$",
+            "title": "Name",
+            "type": "string"
+          },
+          "output_schema": {
+            "additionalProperties": true,
+            "title": "Output Schema",
+            "type": "object"
+          },
+          "permission_config": {
+            "$ref": "#/components/schemas/ToolPermissionConfigDTO"
+          },
+          "status": {
+            "default": "enabled",
+            "enum": [
+              "enabled",
+              "disabled"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "tags": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Tags",
+            "type": "array"
+          },
+          "tool_type": {
+            "const": "api",
+            "default": "api",
+            "title": "Tool Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "name"
+        ],
+        "title": "ToolCreate",
+        "type": "object"
+      },
       "ToolDetail": {
         "description": "工具详情：附加 `api` 类型的 `http_config`（2.5）。",
         "properties": {
@@ -2491,6 +2585,59 @@
         "title": "ToolInvocationRead",
         "type": "object"
       },
+      "ToolPermissionConfigDTO": {
+        "description": "`permission_config` 的**请求侧**形态（2.5 的完整结构）。\n\n字段与 runtime 的 `ToolPermissionConfig` 一一对应（由 `tests/unit/test_tool_schemas.py` 钉住）；\n`extra=\"ignore\"` 让后加的运行时字段不会让旧客户端请求 422。",
+        "properties": {
+          "allow_network": {
+            "default": false,
+            "title": "Allow Network",
+            "type": "boolean"
+          },
+          "allowed_hosts": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Allowed Hosts",
+            "type": "array"
+          },
+          "allowed_paths": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Allowed Paths",
+            "type": "array"
+          },
+          "level": {
+            "$ref": "#/components/schemas/PermissionLevel",
+            "default": "safe"
+          },
+          "max_calls_per_run": {
+            "default": 20,
+            "minimum": 1.0,
+            "title": "Max Calls Per Run",
+            "type": "integer"
+          },
+          "max_output_bytes": {
+            "default": 65536,
+            "minimum": 1.0,
+            "title": "Max Output Bytes",
+            "type": "integer"
+          },
+          "require_approval": {
+            "default": false,
+            "title": "Require Approval",
+            "type": "boolean"
+          },
+          "timeout_seconds": {
+            "default": 15.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Timeout Seconds",
+            "type": "number"
+          }
+        },
+        "title": "ToolPermissionConfigDTO",
+        "type": "object"
+      },
       "ToolRead": {
         "description": "`tools` 行（2.5，前端工具管理页与 Chat 工具卡片的展示字段）。",
         "properties": {
@@ -2576,6 +2723,220 @@
           "updated_at"
         ],
         "title": "ToolRead",
+        "type": "object"
+      },
+      "ToolTestRequest": {
+        "description": "`POST /tools/{id}/test` 的请求（3.2.3：直接执行一次，跳过 LLM）。",
+        "properties": {
+          "arguments": {
+            "additionalProperties": true,
+            "title": "Arguments",
+            "type": "object"
+          }
+        },
+        "title": "ToolTestRequest",
+        "type": "object"
+      },
+      "ToolTestResult": {
+        "description": "`POST /tools/{id}/test` 的结果。\n\n与 `ProviderTestResult` 同风格：**执行失败也是 HTTP 200 + `ok=false`**（`3.2.2` 的先例），\n因为这是\"运营试跑\"而不是业务调用 —— 调用侧的失败语义由 `tool_invocations` 承载。",
+        "properties": {
+          "details": {
+            "additionalProperties": true,
+            "title": "Details",
+            "type": "object"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message"
+          },
+          "latency_ms": {
+            "default": 0,
+            "title": "Latency Ms",
+            "type": "integer"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          },
+          "permission_decision": {
+            "default": "allow",
+            "title": "Permission Decision",
+            "type": "string"
+          },
+          "result": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Result"
+          },
+          "status": {
+            "default": "succeeded",
+            "title": "Status",
+            "type": "string"
+          },
+          "tool_id": {
+            "title": "Tool Id",
+            "type": "string"
+          },
+          "tool_name": {
+            "title": "Tool Name",
+            "type": "string"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok",
+          "tool_id",
+          "tool_name"
+        ],
+        "title": "ToolTestResult",
+        "type": "object"
+      },
+      "ToolUpdate": {
+        "description": "`PATCH /tools/{id}`：只传需要改的字段（同 `ProviderUpdate` 的约定）。\n\n内置（`is_system=true`）行只接受 `status` / `permission_config` / `tags`\n—— 其余列是**代码定义**（4.2.2 的单一来源），改了也会被启动对齐覆盖（服务层给出 422）。",
+        "properties": {
+          "description": {
+            "anyOf": [
+              {
+                "maxLength": 4000,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "display_name": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Display Name"
+          },
+          "http_config": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Http Config"
+          },
+          "input_schema": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Input Schema"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "pattern": "^[a-z][a-z0-9_]{0,63}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "output_schema": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Output Schema"
+          },
+          "permission_config": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ToolPermissionConfigDTO"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "anyOf": [
+              {
+                "enum": [
+                  "enabled",
+                  "disabled"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
+          },
+          "tags": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tags"
+          }
+        },
+        "title": "ToolUpdate",
         "type": "object"
       },
       "TraceDetail": {
@@ -4169,9 +4530,83 @@
         "tags": [
           "tools"
         ]
+      },
+      "post": {
+        "description": "只建 `api` 类型（`tool_type` 收口为 `\"api\"`，其余取值 Pydantic 直接 422）。\n\n- 名称与内置工具（或既有工具）重名 → `CONFLICT`（409）；\n- `http_config.url` 缺失 / `method` 不在白名单 → `VALIDATION_ERROR`（422）。",
+        "operationId": "create_tool_api_v1_tools_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ToolCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_ToolDetail_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "新建 api 类型工具",
+        "tags": [
+          "tools"
+        ]
       }
     },
     "/api/v1/tools/{tool_id}": {
+      "delete": {
+        "description": "`is_system=true` → `CONFLICT`（409）；历史 `tool_invocations` 的 `tool_id` 置空（2.5）。",
+        "operationId": "delete_tool_api_v1_tools__tool_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tool_id",
+            "required": true,
+            "schema": {
+              "title": "Tool Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "删除工具（内置禁删）",
+        "tags": [
+          "tools"
+        ]
+      },
       "get": {
         "description": "不存在 → `TOOL_NOT_FOUND`（404）。",
         "operationId": "get_tool_api_v1_tools__tool_id__get",
@@ -4209,6 +4644,117 @@
           }
         },
         "summary": "工具详情（含 http_config）",
+        "tags": [
+          "tools"
+        ]
+      },
+      "patch": {
+        "description": "2.5：内置工具\"可禁用 / 可改权限\"；改代码属地的列 → `VALIDATION_ERROR`（422）。",
+        "operationId": "update_tool_api_v1_tools__tool_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tool_id",
+            "required": true,
+            "schema": {
+              "title": "Tool Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ToolUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_ToolDetail_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "更新工具（内置只允许 status / permission_config / tags）",
+        "tags": [
+          "tools"
+        ]
+      }
+    },
+    "/api/v1/tools/{tool_id}/test": {
+      "post": {
+        "description": "请求体 `{arguments: {...}}` 可省略（等价于 `{}`）。\n\n执行失败（参数非法 / 被拒 / 沙箱越界 / 超时）沿 `ProviderTestResult` 的先例回 `200 + ok=false`，\n错误码与消息直接来自九步流水线，便于运营在页面上定位。",
+        "operationId": "run_tool_test_api_v1_tools__tool_id__test_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tool_id",
+            "required": true,
+            "schema": {
+              "title": "Tool Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/ToolTestRequest"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Payload"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_ToolTestResult_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "直接执行一次（跳过 LLM）",
         "tags": [
           "tools"
         ]

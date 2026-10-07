@@ -1,7 +1,7 @@
 /**
- * Chat 页（详细设计 5.2 的 `/chat`、`/chat/:id`，M1；工具卡片在 M2 接入）。
+ * Chat 页（详细设计 5.2 的 `/chat`、`/chat/:id`，M1；M2 起含工具调用卡片）。
  *
- * 左侧选 Agent → 建/选会话；右侧流式渲染回答 + 显示本轮 Run 的 token / 耗时 / Trace 入口。
+ * 左侧选 Agent → 建/选会话；右侧流式渲染回答 + 工具调用卡片 + 本轮 Run 的 token / 耗时 / Trace 入口。
  * SSE 事件契约见 3.4，状态归纳见 `stores/chatStore.ts`。
  */
 
@@ -31,6 +31,7 @@ import {
   listMessages,
 } from "@/api/conversations";
 import MessageBubble from "@/components/chat/MessageBubble";
+import ToolCallCard from "@/components/chat/ToolCallCard";
 import { useChatStream } from "@/hooks/useChatStream";
 import { type RunState, useChatStore } from "@/stores/chatStore";
 
@@ -146,6 +147,16 @@ export default function ChatPage() {
             </Space>
           )}
         </Card>
+
+        {toolTimeline.length > 0 ? (
+          <Card size="small" title={`工具调用（${toolTimeline.length}）`} styles={{ body: { padding: 12 } }}>
+            <Space direction="vertical" size={8} style={{ width: "100%" }}>
+              {toolTimeline.map((item) => (
+                <ToolCallCard key={item.toolCallId} item={item} />
+              ))}
+            </Space>
+          </Card>
+        ) : null}
 
         <Space.Compact style={{ width: "100%" }}>
           <Input.TextArea

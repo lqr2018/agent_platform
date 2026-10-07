@@ -5,25 +5,39 @@
 1. 读侧：`tools` 行 → `ToolDefinition` 快照（`to_definition`），供 `AgentRuntime` 每步重算可见工具；
 2. 装配：`build_toolkit` 造 `ToolKit`（注册表 + 九步执行器 + 定义加载闭包），chat_service 一行接入；
 3. 写侧：`DatabaseToolInvocationSink` 把 `ToolInvocationRecord` 落成 `tool_invocations` 一行（步骤 8）；
-4. 启动对齐：`sync_builtin_tools` 把 5 个内置工具与 DB 对齐（4.2.2 / 6.3 第 2 条）。
+4. 启动对齐：`sync_builtin_tools` 把 5 个内置工具与 DB 对齐（4.2.2 / 6.3 第 2 条）；
+5. 运营侧 CRUD 与试跑（3.2.3 的 `POST` / `PATCH` / `DELETE` / `POST /{id}/test`）。
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+import asyncio
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core import ids
 from app.core.config import Settings
-from app.core.errors import ToolNotFoundError
+from app.core.enums import RunKind, SpanStatus, ToolType
+from app.core.errors import ConflictError, ToolNotFoundError, ValidationError
 from app.core.logging import get_logger
 from app.db.models.tool import Tool, ToolInvocation
+from app.runtime.agent.emitter import NullEmitter
 from app.runtime.agent.runtime import DefinitionsLoader, ToolKit
-from app.runtime.tools.base import ToolDefinition, ToolPermissionConfig
-from app.runtime.tools.executor import ToolExecutor, ToolInvocationRecord, ToolInvocationSink
+from app.runtime.llm.base import ToolCallSpec
+from app.runtime.observability.tracer import Tracer
+from app.runtime.tools.base import ToolDefinition, ToolInvocationResult, ToolPermissionConfig
+from app.runtime.tools.executor import (
+    NullInvocationSink,
+    ToolExecutor,
+    ToolInvocationRecord,
+    ToolInvocationSink,
+    ToolRunContext,
+)
 from app.runtime.tools.registry import ToolRegistry, default_registry, seed_rows
+from app.schemas.tools import HTTP_METHODS, ToolCreate, ToolUpdate
 
 logger = get_logger(__name__)
 
@@ -203,3 +217,163 @@ def _apply_code_authoritative(row: Tool, seed: dict[str, Any]) -> bool:
             setattr(row, field, value)
             changed = True
     return changed
+
+
+# --------------------------------------------------------------------------------------
+# 运营侧写端点（3.2.3）：POST / PATCH / DELETE / POST /{id}/test
+# --------------------------------------------------------------------------------------
+BUILTIN_EDITABLE_FIELDS: frozenset[str] = frozenset({"status", "permission_config", "tags"})
+"""内置行允许 `PATCH` 的列。
+
+2.5 明确内置工具"禁删、**可禁用 / 可改权限**"；其余列（`name` / `description` /
+`input_schema` / `http_config` …）是**代码定义的属地**（4.2.2 的单一来源），
+即便改成功也会被下一次启动对齐覆盖，因此直接 422 拒绝而不是静默失效。
+"""
+
+
+async def _ensure_name_available(session: AsyncSession, name: str) -> None:
+    """`tools.name` 有 UNIQUE 约束（也是"内置与 `api` 工具不重名"的约束）→ 冲突给 409。"""
+    exists = (await session.execute(select(Tool.id).where(Tool.name == name))).first()
+    if exists:
+        raise ConflictError(f"Tool name '{name}' already exists", details={"name": name})
+
+
+def _normalize_http_config(config: Mapping[str, Any] | None, *, tool_type: str) -> dict[str, Any]:
+    """`api` 工具的 `http_config` 闸门（2.5 的结构）：`url` 必填、`method` 收口到大写白名单。
+
+    在**配置期**拦下"建了也跑不起来"的工具，比运行期才报 `TOOL_INVALID_ARGUMENTS` 更友好。
+    """
+    normalized = dict(config or {})
+    if tool_type != ToolType.API:
+        return normalized
+
+    url = str(normalized.get("url") or "").strip()
+    if not url:
+        raise ValidationError(
+            "`api` tools require a non-empty http_config.url",
+            details={"field": "http_config.url", "tool_type": tool_type},
+        )
+    method = str(normalized.get("method") or "GET").strip().upper()
+    if method not in HTTP_METHODS:
+        raise ValidationError(
+            f"Unsupported http_config.method '{method}'",
+            details={"field": "http_config.method", "allowed": list(HTTP_METHODS)},
+        )
+    normalized["url"] = url
+    normalized["method"] = method
+    return normalized
+
+
+async def create_tool(session: AsyncSession, data: ToolCreate) -> Tool:
+    """`POST /tools`：建一个 `api` 工具（`builtin` 由迁移 / 启动对齐维护，`mcp` 属 Backlog）。"""
+    await _ensure_name_available(session, data.name)
+    tool = Tool(
+        name=data.name,
+        display_name=data.display_name or data.name,
+        description=data.description,
+        tool_type=str(ToolType.API),
+        input_schema=dict(data.input_schema),
+        output_schema=dict(data.output_schema),
+        builtin_name=None,
+        http_config=_normalize_http_config(data.http_config, tool_type=str(ToolType.API)),
+        permission_config=data.permission_config.model_dump(mode="json"),
+        status=data.status,
+        tags=list(data.tags),
+        is_system=False,
+    )
+    session.add(tool)
+    await session.commit()
+    await session.refresh(tool)
+    return tool
+
+
+async def update_tool(session: AsyncSession, tool_id: str, data: ToolUpdate) -> Tool:
+    """`PATCH /tools/{id}`：内置行只放行 `status` / `permission_config` / `tags`（2.5）。"""
+    tool = await get_tool(session, tool_id)
+    changes = data.model_dump(exclude_unset=True)
+
+    if tool.is_system:
+        offenders = sorted(set(changes) - BUILTIN_EDITABLE_FIELDS)
+        if offenders:
+            raise ValidationError(
+                "Builtin tool definitions are owned by code (4.2.2)",
+                details={
+                    "tool_id": tool_id,
+                    "fields": offenders,
+                    "editable": sorted(BUILTIN_EDITABLE_FIELDS),
+                    "reason": "BUILTIN_DEFINITION_IS_CODE_OWNED",
+                },
+            )
+
+    name = changes.get("name")
+    if name is not None and name != tool.name:
+        await _ensure_name_available(session, str(name))
+
+    if "http_config" in changes:
+        changes["http_config"] = _normalize_http_config(
+            changes["http_config"], tool_type=str(tool.tool_type or ToolType.API)
+        )
+
+    for field, value in changes.items():
+        setattr(tool, field, value)
+
+    await session.commit()
+    await session.refresh(tool)
+    return tool
+
+
+async def delete_tool(session: AsyncSession, tool_id: str) -> None:
+    """`DELETE /tools/{id}`：内置行禁删（2.5，409）；删 `api` 工具时把历史调用的 `tool_id` 置空。
+
+    `tool_invocations.tool_id` 在 2.5 里声明为 `ON DELETE SET NULL`（删工具不能连带删审计），
+    这里显式置空是为了**不依赖 SQLite 的外键开关**（默认关闭，`PRAGMA foreign_keys=ON` 才生效）。
+    """
+    tool = await get_tool(session, tool_id)
+    if tool.is_system:
+        raise ConflictError(
+            f"Builtin tool '{tool.name}' cannot be deleted",
+            details={"tool_id": tool_id, "reason": "BUILTIN_TOOL_NOT_DELETABLE"},
+        )
+    await session.execute(update(ToolInvocation).where(ToolInvocation.tool_id == tool_id).values(tool_id=None))
+    await session.delete(tool)
+    await session.commit()
+
+
+async def run_tool_test(
+    session: AsyncSession,
+    tool_id: str,
+    *,
+    settings: Settings,
+    arguments: Mapping[str, Any] | None = None,
+) -> tuple[Tool, ToolInvocationResult]:
+    """`POST /tools/{id}/test`：走**同一套九步流水线**直接执行一次（3.2.3：跳过 LLM）。
+
+    三个刻意的选择：
+
+    - 用真实 `ToolExecutor` 而不是直接 `tool.run()` —— 参数校验 / 权限闸门 / 沙箱 / 超时 /
+      输出截断全部生效，"试跑"结果才代表运行期行为（DoD 2 的"权限接口生效"就是这么验的）；
+    - `NullInvocationSink` —— 试跑没有 `run_id`（`tool_invocations.run_id` 是指向 `runs` 的
+      非空外键），因此**不落库**；试跑留痕靠日志与返回值；
+    - `api` 工具的 host 白名单仍取自 `tools.permission_config`（沙箱网络闸门照常生效）。
+    """
+    row = await get_tool(session, tool_id)
+    definition = to_definition(row)
+    tracer = Tracer.from_settings(settings)
+    run_trace = tracer.start_run(kind=RunKind.CHAT, name=f"tool-test:{row.name}", run_id=ids.new_ulid())
+    executor = ToolExecutor(registry=default_registry(), settings=settings, sink=NullInvocationSink())
+    try:
+        result = await executor.execute(
+            ToolCallSpec(id="tool-test", name=row.name, arguments=dict(arguments or {})),
+            ctx=ToolRunContext(
+                run_id=run_trace.run_id,
+                definitions={row.name: definition},
+                settings=settings,
+                tracer=tracer,
+                emitter=NullEmitter(),
+                cancellation=asyncio.Event(),
+                sandbox_root=settings.sandbox_path,
+            ),
+        )
+    finally:
+        await tracer.end_run(run_trace, status=SpanStatus.OK)
+    return row, result

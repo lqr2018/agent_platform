@@ -74,7 +74,7 @@ frontend  →  /api/v1 (HTTP + SSE)  →  api
 |---|---|
 | 基础设施：配置 / 日志 / 错误模型 / 迁移 / 健康检查 | ✅ Phase 0 |
 | Agent Runtime：Provider / Agent CRUD / 流式对话 / Trace | ✅ Phase 1（M1） |
-| Tool Calling：Tool Registry / 权限分级 / 沙箱 | Phase 2（M2） |
+| Tool Calling：Tool Registry / 权限分级 / 沙箱 | ✅ Phase 2（M2） |
 | Workflow：串行图 / 状态落库 / 断点续跑 | Phase 3（M2） |
 | RAG：知识库 / 摄取 / 检索 / 引用 | Phase 5（M3） |
 | Trace 与轻量评测（`scripts/evaluate.py`） | Phase 7（M3） |
@@ -84,7 +84,7 @@ frontend  →  /api/v1 (HTTP + SSE)  →  api
 
 ## 5. 当前进度
 
-**已完成：Phase 0 项目基础设施 + Phase 1 最小 Agent Runtime**（对齐《详细设计》7.1 / 7.2）
+**已完成：Phase 0 项目基础设施 + Phase 1 最小 Agent Runtime + Phase 2 Tool Calling**（对齐《详细设计》7.1 / 7.2 / 7.3）
 
 Phase 0（基础设施）：
 
@@ -107,9 +107,19 @@ Phase 1（最小 Agent Runtime）：
 - [x] 前端：`/agents[/:id]`、`/models`、`/chat[/:id]`（流式渲染 + Run 状态卡）、`/traces[/:traceId]`（span 树 + 明细抽屉）
 - [x] 契约测试：3.4 事件名与 payload ↔ `core/events.py` ↔ `types/events.ts`；迁移 ↔ ORM 一致
 
-**验证情况**：后端 `pytest` 236 项（233 passed + 3 skipped）、覆盖率 92%（`runtime` 81–100%）、`ruff` / `mypy --strict` 0 告警、`alembic` 往返 + `alembic check` 通过、就绪探针 `python -m app.scripts.check_readyz` 在**干净检出（无 `data/` 目录）**下通过；前端 `eslint` / `prettier` / `tsc` / `vitest`（20 项）/ `vite build` 全绿；并在**真实进程**里跑通「SSE 对话 → Run → Trace（3 span）」链路。
+Phase 2（Tool Calling）：
 
-下一步：**Phase 2 Tool Calling**（见《详细设计》7.3，M2）。
+- [x] 迁移 `0003_phase2_tool_tables`（`tools` / `tool_invocations`）+ 数据迁移写入 5 个内置工具（`calculator` / `file_read` / `file_write` / `web_search` / `python_execute`）
+- [x] Tool 运行时：`runtime/tools/{base,registry,executor,permissions,sandbox}.py` + 5 个内置工具（`calculator` AST 白名单、`file_write` / `python_execute` 需显式开启、`web_search` 无 Key 降级）
+- [x] **九步流水线**：查表 → 合并权限 → 参数校验（自研 JSON Schema 子集）→ 权限判定 → 次数闸门 → 执行（限流 + 超时 + builtin/api 分派）→ 输出截断 → 落库（`tool_invocations` + tool span）→ 返回；失败不中断 Run（错误回填给模型，连续 3 次才终止）
+- [x] `AgentRuntime` 循环接入 `tool_calls` 分支：每步重算可见工具、`role=tool` 消息落库、`max_steps` / 重复失败停止条件
+- [x] API：`/tools` 全量 7 端点（读 3 + **写 4**：`POST` / `PATCH` / `DELETE` / `POST /{id}/test`）+ `GET /tool-invocations`
+- [x] 前端：`/tools` 工具管理页（列表 / 筛选 / 详情 / 启停 / 权限编辑 / 试跑 / 删除）+ Chat 内**工具调用卡片**（名称 / 参数 / 结果 / 耗时 / 状态）+ Trace 树 tool 层（`input` / `output`）
+- [x] 启动对齐：`sync_builtin_tools()` 把代码侧定义同步进 DB，且**不动**运营侧的 `status` / `permission_config`
+
+**验证情况（Phase 0–2）**：后端 `pytest` **402 项**（399 passed + 3 skipped）、覆盖率 **93%**（`app/runtime/tools/**` 85–100%、`app/services/tool_service.py` 96%；`app/api/**` 的端点尾行在本机 coverage 下偏保守，口径见《详细设计》7.2 的说明）、`ruff` / `mypy --strict` 0 告警、`alembic` 往返 + `alembic check`（`No new upgrade operations detected`）、就绪探针 `python -m app.scripts.check_readyz` 在**干净检出（无 `data/` 目录）**下通过（`ok=True revision 0003_phase2_tool_tables`）；前端 `eslint` / `prettier` / `tsc` / `vitest`（**23 项**）/ `vite build` 全绿。Phase 1 的回归用例全绿（无工具 Agent 行为不变，`test_chat_sse.py` / `test_agent_runtime.py`）；Phase 2 的端到端链路（fake Provider 触发 `calculator` → 工具事件 + `tool_invocations` + tool span，跑在真实 `create_app()` + lifespan + SQLite 上）见 `tests/integration/test_chat_tool_sse.py`。
+
+下一步：**Phase 3 Workflow**（见《详细设计》7.4，M2）。
 
 ---
 
@@ -158,7 +168,8 @@ cd ..\frontend; npm run gen:api
 
 - 单进程 + SQLite，无多实例/横向扩展；不引入 Redis / Celery / PostgreSQL / 向量库集群（SD-8 / SD-9 / SD-11）。
 - 无鉴权（`owner_key` 固定 `local`，SD-3）；请勿直接暴露到公网。
-- Phase 1 的 Agent 是**纯对话型**：`tool_ids` / `knowledge_base_ids` / `workflow_id` 必须为空，填了会返回 `AGENT_INVALID_CONFIG`（未实现的能力不提供入口，SD-14②）。
+- Phase 2 起 Agent 可带工具：`tool_ids` 必须指向**存在且 `enabled`** 的工具，否则 `AGENT_INVALID_CONFIG`；`knowledge_base_ids` / `workflow_id` 仍必须为空（Phase 5 / Phase 3，SD-14②）。
+- 工具执行是**顺序**的（SD-2，同一 step 内逐个调用）；同一工具连续失败 3 次才终止 Run（`TOOL_REPEATED_FAILURE`）。
 - 同一会话同时只允许一个活跃 Run（第二个请求 409）；客户端断开**默认不取消** Run（`DETACH_CANCEL=true` 才取消，SD/3.4）。
 - Prompt 历史只做"变更留档 + 只读列表"，**回滚端点**（`prompt-versions/{version}/activate`）属延后项（《详细设计》7.0.1）。
 - Workflow 不支持并行分支（SD-1）；工具调用顺序执行（SD-2）。

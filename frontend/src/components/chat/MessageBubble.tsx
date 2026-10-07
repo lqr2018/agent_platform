@@ -1,8 +1,9 @@
 /**
  * 消息气泡（详细设计 5.1 的 `components/chat/MessageBubble.tsx`）。
  *
- * Phase 1 只渲染文本 + 元信息（token / 耗时 / finish_reason）；
- * 工具调用卡片与引用来源卡片在 Phase 2 / Phase 5 接入（SD-14②：不预先堆空组件）。
+ * 只渲染文本 + 元信息（token / 耗时 / finish_reason）；工具调用用独立组件
+ * `components/chat/ToolCallCard.tsx`（M2 起，事件 6/7/8 驱动），引用来源卡片在 Phase 5 接入
+ * （SD-14②：不预先堆空组件）。
  */
 
 import { Card, Space, Tag, Typography } from "antd";

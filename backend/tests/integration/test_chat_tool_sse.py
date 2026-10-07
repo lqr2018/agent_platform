@@ -96,6 +96,9 @@ async def test_calculator_tool_call_is_persisted_end_to_end(app_client: AsyncCli
     assert len(tool_spans) == 1
     assert tool_spans[0].id == invocation.span_id
     assert tool_spans[0].input == {"arguments": {"expression": "2+2"}}
+    # DoD 4：tool span 同时要有 `output`（结果），前端的 Span 抽屉直接渲染这两个字段
+    assert tool_spans[0].output == "2+2 = 4"
+    assert tool_spans[0].status == "ok" and tool_spans[0].latency_ms is not None
 
     listed = await app_client.get("/api/v1/tool-invocations", params={"run_id": run.id})
     assert listed.status_code == 200
