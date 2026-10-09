@@ -20,7 +20,7 @@ from typing import Any
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from starlette.datastructures import Headers, MutableHeaders
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.cors import CORSMiddleware
@@ -35,6 +35,7 @@ from app.core.errors import (
     HTTP_STATUS_TO_CODE,
     AppError,
     ConflictError,
+    DatabaseBusyError,
     ErrorCode,
     InternalError,
     ValidationError,
@@ -43,7 +44,7 @@ from app.core.logging import configure_logging, get_logger
 from app.db import session as db_session
 from app.runtime.observability import context as trace_context
 from app.schemas.common import ErrorResponse
-from app.services import tool_service, workflow_service
+from app.services import run_service, tool_service, workflow_service
 
 logger = get_logger(__name__)
 
@@ -159,6 +160,20 @@ async def _integrity_error_handler(request: Request, exc: Exception) -> JSONResp
     return _error_response(ConflictError("Database constraint violated", details={"reason": raw}), request=request)
 
 
+def _operational_error_handler(request: Request, exc: Exception) -> JSONResponse:
+    """SQLite 写锁竞争 → 503（明确"可以重试"）；其它 `OperationalError` 仍按 500 处理。
+
+    不加这个处理器时锁冲突会走 `Exception` 兜底，客户端只看到 500 —— 既误导（像是代码 bug）
+    又不利于前端做退避重试。判断依据是驱动原文，避免把真正的实现缺陷伪装成"重试就好"。
+    """
+    raw = str(getattr(exc, "orig", exc))
+    logger.warning("db.operational_error", path=request.url.path, detail=raw)
+    lowered = raw.lower()
+    if "locked" in lowered or "busy" in lowered:
+        return _error_response(DatabaseBusyError(details={"reason": raw}), request=request)
+    return _error_response(InternalError(), request=request)
+
+
 async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
     """未捕获异常：堆栈只进日志，响应体只回 `INTERNAL_ERROR` + `meta.request_id`（1.6）。"""
     error = InternalError()
@@ -185,6 +200,7 @@ def _register_exception_handlers(app: FastAPI) -> None:
     app.add_exception_handler(RequestValidationError, _validation_error_handler)
     app.add_exception_handler(StarletteHTTPException, _http_exception_handler)
     app.add_exception_handler(IntegrityError, _integrity_error_handler)
+    app.add_exception_handler(OperationalError, _operational_error_handler)
     app.add_exception_handler(Exception, _unhandled_exception_handler)
 
 
@@ -237,6 +253,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        # W2：收尾顺序不能颠倒 —— 先把仍在跑的后台 Run 任务取消并等它们写完终态（此时连接池还在），
+        # 再关池。否则任务会停在 `running`，或在池关闭后写库直接报错。
+        canceled_runs = await workflow_service.shutdown_active_runs()
+        if canceled_runs:
+            logger.info("app.shutdown_runs_converged", canceled=canceled_runs)
+        run_service.reset_run_registry()
         await db_session.dispose_engine()
         logger.info("app.shutdown")
 

@@ -33,6 +33,7 @@ from typing import Any
 from app.core.enums import NodeType, RunStatus, SpanType
 from app.core.errors import (
     AppError,
+    ErrorCode,
     InternalError,
     RunCanceledError,
     WorkflowMaxStepsExceededError,
@@ -414,6 +415,22 @@ class SimpleEngine:
                 outcome = await nodes.execute_node(
                     node, state=state, inputs=inputs, ctx=ctx, runner=runner, warnings=warnings
                 )
+            except asyncio.CancelledError:
+                # 取消（`asyncio.wait_for` 超时 / 进程收尾）不是普通异常，但**这一行必须收尾**：
+                # 否则 `node_runs` 会永久停在 `running`（前端节点表一直转圈，见 4.5.3 的状态语义）。
+                # 记 `canceled` 而不是 `failed` —— 任务不是自己失败的，是外部把它掐停在执行点上。
+                await _finish_attempt(
+                    sink,
+                    node_run_id=node_run_id,
+                    node=node,
+                    status=RunStatus.CANCELED,
+                    output={"error": str(ErrorCode.RUN_CANCELED)},
+                    latency_ms=int((perf_counter() - started) * 1000),
+                    span_id=span.span_id,
+                    error_code=str(ErrorCode.RUN_CANCELED),
+                    error_message="Node run was canceled",
+                )
+                raise
             except Exception as exc:
                 await _finish_attempt(
                     sink,

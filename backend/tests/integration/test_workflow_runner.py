@@ -11,12 +11,16 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import pytest
 import pytest_asyncio
 from httpx import AsyncClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
 from app.db.models import Run, WorkflowRun
+from app.runtime.workflow import NodeOutcome
+from app.runtime.workflow import nodes as nodes_module
 from app.services import run_service, workflow_service
 from tests.helpers import FAKE_MODEL, collect_sse, create_agent, create_conversation, create_fake_provider
 from tests.integration.test_workflows_api import create_workflow, definition_with, with_agent_ids
@@ -53,6 +57,42 @@ async def start_workflow_run(client: AsyncClient, workflow_id: str, payload: dic
     response = await client.post(f"/api/v1/workflows/{workflow_id}/runs", json={"input": payload})
     assert response.status_code == 202, response.text
     return dict(response.json()["data"])
+
+
+def slow_node_execution(delay: float) -> Any:
+    """节点执行的测试替身：睡 `delay` 秒（制造"超时 / 取消落在节点执行中"的窗口）。
+
+    `SimpleEngine` 是通过 `nodes.execute_node` 这个**模块属性**调用节点的 —— monkeypatch 它即可
+    在不碰生产代码的前提下把节点变慢（9.2 的测试替身规则）。
+    """
+
+    async def _execute(*_args: Any, **_kwargs: Any) -> NodeOutcome:
+        await asyncio.sleep(delay)
+        return NodeOutcome(state_updates={"output": "slow"}, output_summary={"stub": True})
+
+    return _execute
+
+
+async def wait_for_running_node(client: AsyncClient, run_id: str, *, timeout: float = 10.0) -> None:
+    """等到该 Run 出现一行 `running` 的节点（"节点真的开始跑了"的同步点）。"""
+    deadline = asyncio.get_running_loop().time() + timeout
+    while asyncio.get_running_loop().time() < deadline:
+        if any(row["status"] == "running" for row in await node_runs_of(client, run_id)):
+            return
+        await asyncio.sleep(0.02)
+    raise AssertionError(f"workflow run {run_id} never had a running node")
+
+
+async def api_run_of(session: AsyncSession, workflow_run_id: str) -> Run:
+    """取该 WorkflowRun 的 `runs` 行（`canceled_at` 这类字段只能从库里断言，API 不返回）。
+
+    先 `rollback()`：结束本 session 上任何隐式的只读事务，避免读到取消写入之前的快照。
+    """
+    await session.rollback()
+    statement = select(Run).where(Run.workflow_run_id == workflow_run_id).order_by(Run.started_at.desc())
+    api_run = (await session.execute(statement)).scalars().first()
+    assert api_run is not None, f"workflow run {workflow_run_id} has no runs row"
+    return api_run
 
 
 async def test_manual_run_end_to_end(app_client: AsyncClient, db_session: AsyncSession) -> None:
@@ -520,3 +560,110 @@ async def test_chat_inline_workflow_streams_node_events(app_client: AsyncClient,
     assert [item["id"] for item in workflow_runs] == [runs[0]["workflow_run_id"]]
     assert workflow_runs[0]["trigger"] == "api"
     assert workflow_runs[0]["status"] == "succeeded"
+
+
+async def test_timeout_converges_run_and_node_rows(
+    app_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """W1 / W3 回归：`timeout_seconds` 到点后 `workflow_runs` / `runs` / `node_runs` 必须全部收敛。
+
+    修复前的症状：`asyncio.wait_for` 的取消打断引擎里正在进行的 `commit()` → session 失效 →
+    `_finalize` 抛 `PendingRollbackError` 穿透收尾 → 两行永久 `running`、没有 `workflow.run_finished`
+    日志（实测超时 12s 后仍为 `running`，并已排除 `database is locked`）。
+    """
+    provider = await create_fake_provider(db_session, name="timeout-provider")
+    planner = await create_agent(app_client, provider_id=provider.id, name="timeout-planner")
+    writer = await create_agent(app_client, provider_id=provider.id, name="timeout-writer")
+    agents = {"planner": str(planner["id"]), "writer": str(writer["id"])}
+    definition = with_agent_ids(
+        definition_with(config={"max_steps": 10, "recursion_limit": 5, "timeout_seconds": 1}), agents
+    )
+    workflow = await create_workflow(app_client, agents, name="timeout", definition=definition)
+    assert (await app_client.post(f"/api/v1/workflows/{workflow['id']}/publish")).status_code == 200
+
+    monkeypatch.setattr(nodes_module, "execute_node", slow_node_execution(5.0))
+
+    started = await start_workflow_run(app_client, workflow["id"], {"input": "1+1", "expr": "1"})
+    run = await wait_for_terminal(app_client, started["id"], timeout=20.0)
+
+    assert run["status"] == "failed"
+    assert run["error_code"] == "RUN_TIMEOUT"
+    assert run["ended_at"] is not None
+
+    rows = await node_runs_of(app_client, started["id"])
+    assert rows, "超时必须发生在节点执行中，否则这个用例没有覆盖到目标窗口"
+    assert {row["status"] for row in rows} == {"canceled"}
+
+    api_run = await api_run_of(db_session, started["id"])
+    assert api_run.status == "failed"
+    assert api_run.error_code == "RUN_TIMEOUT"
+    assert api_run.canceled_at is None
+
+
+async def test_cancel_active_run_records_canceled_at(
+    app_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """W4 回归：取消**活跃** Run 后 `runs.canceled_at` 必须回填。
+
+    与 `run_service.cancel_run(...)` 直接落终态的分支保持同一语义（2.6）：查询"取消时间"时
+    不该因为走的是 Workflow 路径就拿不到值。
+    """
+    provider = await create_fake_provider(db_session, name="active-cancel-provider")
+    planner = await create_agent(app_client, provider_id=provider.id, name="active-planner")
+    writer = await create_agent(app_client, provider_id=provider.id, name="active-writer")
+    agents = {"planner": str(planner["id"]), "writer": str(writer["id"])}
+    workflow = await create_workflow(app_client, agents, name="active-cancel")
+    assert (await app_client.post(f"/api/v1/workflows/{workflow['id']}/publish")).status_code == 200
+
+    monkeypatch.setattr(nodes_module, "execute_node", slow_node_execution(1.0))
+
+    started = await start_workflow_run(app_client, workflow["id"], {"input": "1+1", "expr": "1"})
+    await wait_for_running_node(app_client, started["id"])
+
+    cancel = await app_client.post(f"/api/v1/workflow-runs/{started['id']}/cancel")
+    assert cancel.status_code == 200, cancel.text
+    assert cancel.json()["data"]["status"] == "running"  # 活跃：只置信号，终态由后台任务收敛
+
+    run = await wait_for_terminal(app_client, started["id"], timeout=20.0)
+    assert run["status"] == "canceled"
+    assert run["error_code"] == "RUN_CANCELED"
+
+    api_run = await api_run_of(db_session, started["id"])
+    assert api_run.status == "canceled"
+    assert api_run.canceled_at is not None
+    assert all(row["status"] != "running" for row in await node_runs_of(app_client, started["id"]))
+
+
+async def test_shutdown_converges_active_runs(
+    app_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """W2 回归：进程收尾取消后台任务时，Run 必须收敛为 `canceled`（不能停在 `running`）。
+
+    lifespan 的 `finally` 会在 `dispose_engine()` 之前调 `shutdown_active_runs()` ——
+    这里直接调同一个函数，等价于"进程正在优雅退出"的那一刻。
+    """
+    provider = await create_fake_provider(db_session, name="shutdown-provider")
+    planner = await create_agent(app_client, provider_id=provider.id, name="shutdown-planner")
+    writer = await create_agent(app_client, provider_id=provider.id, name="shutdown-writer")
+    agents = {"planner": str(planner["id"]), "writer": str(writer["id"])}
+    workflow = await create_workflow(app_client, agents, name="shutdown")
+    assert (await app_client.post(f"/api/v1/workflows/{workflow['id']}/publish")).status_code == 200
+
+    monkeypatch.setattr(nodes_module, "execute_node", slow_node_execution(30.0))
+
+    started = await start_workflow_run(app_client, workflow["id"], {"input": "1+1", "expr": "1"})
+    await wait_for_running_node(app_client, started["id"])
+
+    canceled = await workflow_service.shutdown_active_runs(timeout=5.0)
+    assert canceled >= 1
+
+    await db_session.rollback()
+    workflow_run = await db_session.get(WorkflowRun, started["id"])
+    assert workflow_run is not None
+    assert workflow_run.status == "canceled"
+    assert workflow_run.error_code == "RUN_CANCELED"
+
+    api_run = await api_run_of(db_session, started["id"])
+    assert api_run.status == "canceled"
+    assert api_run.canceled_at is not None
+    assert all(row["status"] != "running" for row in await node_runs_of(app_client, started["id"]))

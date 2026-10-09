@@ -90,3 +90,34 @@ async def test_get_engine_creates_directory_for_cold_path(tmp_path: Path) -> Non
             await conn.exec_driver_sql("SELECT 1")
     finally:
         await db_session.dispose_engine()
+
+
+@pytest.mark.asyncio
+async def test_sqlite_pragmas_are_applied(tmp_path: Path) -> None:
+    """写锁加固（W5）：每条连接都带 WAL 与 `busy_timeout`。
+
+    默认的 `journal_mode=delete` 下"前端轮询读"和"后台落库写"会互相排队；默认 5s 的忙等
+    在 Workflow + 观测落库并发时偏紧，触发 `database is locked` 时后台写是静默失败的。
+    """
+    db_path = tmp_path / "pragmas" / "app.db"
+    await db_session.dispose_engine()
+    settings = Settings(_env_file=None, database_url=f"sqlite+aiosqlite:///{db_path.as_posix()}")
+    try:
+        engine = db_session.get_engine(settings)
+        async with engine.connect() as conn:
+            journal_mode = (await conn.exec_driver_sql("PRAGMA journal_mode")).scalar_one()
+            busy_timeout = (await conn.exec_driver_sql("PRAGMA busy_timeout")).scalar_one()
+            synchronous = (await conn.exec_driver_sql("PRAGMA synchronous")).scalar_one()
+        assert str(journal_mode).lower() == "wal"
+        assert int(busy_timeout) == int(db_session.SQLITE_BUSY_TIMEOUT_SECONDS * 1000)
+        assert int(synchronous) == 1  # NORMAL（0=OFF / 1=NORMAL / 2=FULL）
+    finally:
+        await db_session.dispose_engine()
+
+
+def test_connect_args_only_for_sqlite() -> None:
+    """非 SQLite（SD-8：未来可能切 PG）不能带 `aiosqlite` 的 `timeout` 参数。"""
+    assert db_session._connect_args("postgresql+asyncpg://user:pw@localhost/appdb") == {}
+    assert db_session._connect_args("sqlite+aiosqlite:///./data/app.db") == {
+        "timeout": db_session.SQLITE_BUSY_TIMEOUT_SECONDS
+    }

@@ -6,10 +6,12 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 
 import pytest
 from fastapi import FastAPI
 from httpx import AsyncClient
+from sqlalchemy.exc import OperationalError
 
 from app.core.errors import ConflictError, InternalError, NotFoundError, ValidationError
 from app.main import REQUEST_ID_HEADER
@@ -31,6 +33,16 @@ async def _raise_unexpected() -> None:
     raise RuntimeError("internal detail that must not leak")
 
 
+async def _raise_db_locked() -> None:
+    """SQLite 写锁竞争（W5）：驱动原文含 `database is locked` → 503 而不是 500。"""
+    raise OperationalError("UPDATE runs SET status='succeeded'", {}, sqlite3.OperationalError("database is locked"))
+
+
+async def _raise_db_other() -> None:
+    """其它 `OperationalError`（如 SQL 语法/类型问题）不是"可以重试"，仍是 500。"""
+    raise OperationalError("SELECT nope FROM runs", {}, sqlite3.OperationalError("no such column: nope"))
+
+
 async def _echo_number(value: int) -> dict[str, int]:
     return {"value": value}
 
@@ -41,6 +53,8 @@ def probe_app(app: FastAPI) -> FastAPI:
     app.add_api_route("/_test/conflict", _raise_conflict, methods=["GET"])
     app.add_api_route("/_test/validation", _raise_validation, methods=["GET"])
     app.add_api_route("/_test/unexpected", _raise_unexpected, methods=["GET"])
+    app.add_api_route("/_test/db-locked", _raise_db_locked, methods=["GET"])
+    app.add_api_route("/_test/db-other", _raise_db_other, methods=["GET"])
     app.add_api_route("/_test/echo", _echo_number, methods=["GET"])
     return app
 
@@ -148,3 +162,22 @@ async def test_access_log_records_status_and_request_id(
     assert access["status"] == 200
     assert access["path"] == "/healthz"
     assert access["duration_ms"] >= 0
+
+
+async def test_database_locked_maps_to_503(probe_client: AsyncClient) -> None:
+    """W5：SQLite 写锁竞争 → 503（可重试语义），而不是误导性的 500。"""
+    response = await probe_client.get("/_test/db-locked")
+
+    assert response.status_code == 503
+    body = response.json()
+    assert body["error"]["code"] == "INTERNAL_ERROR"
+    assert "busy" in body["error"]["message"].lower()
+    assert body["error"]["details"]["reason"] == "database is locked"
+
+
+async def test_other_operational_error_stays_500(probe_client: AsyncClient) -> None:
+    """非锁类的 `OperationalError` 不是"可以重试"，仍按 500 处理（避免掩盖实现缺陷）。"""
+    response = await probe_client.get("/_test/db-other")
+
+    assert response.status_code == 500
+    assert response.json()["error"]["code"] == "INTERNAL_ERROR"

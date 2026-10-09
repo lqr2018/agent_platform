@@ -10,15 +10,22 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import pytest
 
-from app.core.enums import NodeType, RunStatus, SpanType
+from app.core.enums import NodeType, RunKind, RunStatus, SpanType
 from app.core.events import SseEventType
-from app.runtime.workflow import SimpleEngine
+from app.runtime.agent.emitter import ListEmitter
+from app.runtime.workflow import NodeOutcome, SimpleEngine, WorkflowNode
 from app.runtime.workflow import state as state_module
 from tests.unit.workflow.stubs import (
+    RUN_ID,
+    RecordingSink,
+    StubRunner,
+    canonical_graph,
+    make_tracer,
     run_engine,
 )
 
@@ -106,3 +113,48 @@ async def test_conformance_spans_and_checkpoints(engine: Any) -> None:
     assert [item["current_node_id"] for item in checkpoints[:4]] == ["start", "planner", "planner", "search"]
     assert checkpoints[-1]["current_node_id"] == "end"
     assert checkpoints[-1]["state"]["draft"] == "agent-reply"
+
+
+async def test_cancel_during_node_execution_finishes_node_run_row() -> None:
+    """W3：取消落在节点执行中时，该 `node_runs` 行必须收尾（否则永久停在 `running`）。
+
+    `CancelledError` 是 `BaseException`，不会进 `except Exception` —— 修复前 planner 那一行
+    永远停在 `running`：`asyncio.wait_for` 超时 / 进程收尾都会踩到这个窗口，
+    前端节点表于是永远转圈（4.5.3 的状态语义被破坏）。
+    """
+    sink = RecordingSink()
+    tracer, _ = make_tracer()
+    emitter = ListEmitter()
+    entered = asyncio.Event()
+
+    class BlockingRunner(StubRunner):
+        """在 agent 节点上阻塞，直到测试自己取消这个任务。"""
+
+        async def run_agent_node(self, node: WorkflowNode, input_text: str, ctx: Any) -> NodeOutcome:
+            entered.set()
+            await asyncio.Event().wait()
+            return await super().run_agent_node(node, input_text, ctx)
+
+    tracer.start_run(kind=RunKind.WORKFLOW, name="workflow-test", run_id=RUN_ID)
+    task = asyncio.create_task(
+        SimpleEngine().run(
+            canonical_graph(),
+            state_module.initial_state({"input": "写一份调研"}, run={"run_id": RUN_ID, "workflow_id": "wf"}),
+            run_id=RUN_ID,
+            emit=emitter,
+            cancel=asyncio.Event(),
+            tracer=tracer,
+            sink=sink,
+            runner=BlockingRunner(),
+        )
+    )
+    await entered.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    planner_rows = sink.rows_of("planner")
+    assert len(planner_rows) == 1
+    assert planner_rows[0].status is RunStatus.CANCELED
+    assert planner_rows[0].error_code == "RUN_CANCELED"
+    assert [row.node_id for row in sink.node_runs if row.status is RunStatus.RUNNING] == []

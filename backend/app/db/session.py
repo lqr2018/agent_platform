@@ -8,10 +8,11 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from pathlib import Path
+from typing import Any
 
 from alembic.config import Config as AlembicConfig
 from alembic.script import ScriptDirectory
-from sqlalchemy import text
+from sqlalchemy import event, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import ArgumentError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
@@ -20,6 +21,61 @@ from app.core.config import Settings, get_settings
 
 BACKEND_ROOT = Path(__file__).resolve().parents[2]
 ALEMBIC_INI_PATH = BACKEND_ROOT / "alembic.ini"
+
+SQLITE_BUSY_TIMEOUT_SECONDS = 10.0
+"""SQLite 写锁等待上限（秒）。
+
+默认的 5s 对"后台 Run 落 `node_runs` + 前端轮询 + `/readyz` 的 `BEGIN IMMEDIATE`"三者并存时偏紧：
+一旦等到超时就抛 `OperationalError: database is locked`，而**后台任务里的写失败是静默的**（4.8.2：
+观测落库不影响主流程）—— 表现为"节点行状态偶尔停在 running"这类难查的现象。10s 覆盖正常的
+写事务排队，同时把真正的死锁暴露时间控制在可接受范围内。
+"""
+
+SQLITE_PRAGMAS: tuple[str, ...] = (
+    # WAL：读不被写阻塞（详情/节点表轮询不再和后台落库互相排队），写与写仍是串行的
+    "PRAGMA journal_mode=WAL",
+    # WAL 下的常规取舍：崩溃时不丢已提交数据，比默认的 FULL 少一次 fsync/事务
+    "PRAGMA synchronous=NORMAL",
+)
+"""每种连接建立时执行的 PRAGMA（只有 SQLite 会用到）。"""
+
+
+def _sqlite_url(database_url: str) -> bool:
+    """是否 SQLite URL（非 SQLite 或 URL 非法一律返回 `False`，由建 engine 时再报错）。"""
+    try:
+        url = make_url(database_url)
+    except ArgumentError:
+        return False
+    return url.drivername.startswith("sqlite")
+
+
+def _connect_args(database_url: str) -> dict[str, Any]:
+    """`aiosqlite` 的 `timeout`（秒）在**驱动层**等锁，比在 SQLAlchemy 层重试更省事。
+
+    它与 `PRAGMA busy_timeout` 是同一件事的两种写法（驱动用自己的默认值，PRAGMA 覆盖它），
+    两处都设是为了"无论谁先生效都一致"。
+    """
+    return {"timeout": SQLITE_BUSY_TIMEOUT_SECONDS} if _sqlite_url(database_url) else {}
+
+
+def _install_sqlite_pragmas(engine: AsyncEngine, database_url: str) -> None:
+    """给每个**新连接**挂上 PRAGMA（`journal_mode` / `synchronous` / `busy_timeout`）。
+
+    用 `connect` 事件而不是 `connect_args`：PRAGMA 在连接建立后立刻执行，连接池里后续
+    复用的连接都带着这些设置；`:memory:` 库上 `journal_mode=WAL` 只会返回 `memory`，不报错。
+    """
+    if not _sqlite_url(database_url):
+        return
+
+    @event.listens_for(engine.sync_engine, "connect")
+    def _set_sqlite_pragmas(dbapi_connection: Any, _record: Any) -> None:
+        cursor = dbapi_connection.cursor()
+        try:
+            for pragma in (*SQLITE_PRAGMAS, f"PRAGMA busy_timeout={int(SQLITE_BUSY_TIMEOUT_SECONDS * 1000)}"):
+                cursor.execute(pragma)
+        finally:
+            cursor.close()
+
 
 _engine: AsyncEngine | None = None
 _engine_url: str | None = None
@@ -59,7 +115,13 @@ def get_engine(settings: Settings | None = None) -> AsyncEngine:
     config = settings or get_settings()
     if _engine is None or _engine_url != config.database_url:
         ensure_sqlite_directory(config.database_url)
-        _engine = create_async_engine(config.database_url, echo=False, future=True)
+        _engine = create_async_engine(
+            config.database_url,
+            echo=False,
+            future=True,
+            connect_args=_connect_args(config.database_url),
+        )
+        _install_sqlite_pragmas(_engine, config.database_url)
         _engine_url = config.database_url
     return _engine
 

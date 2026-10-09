@@ -155,6 +155,19 @@ class InternalError(AppError):
     message = "Internal error"
 
 
+class DatabaseBusyError(AppError):
+    """SQLite 写锁竞争（503）：请求**可以稍后重试**，不该被当成 500 内部错误。
+
+    错误码沿用 `INTERNAL_ERROR` —— 附录 A 没有 503 专用码，且 SD-14② 不为未实现的能力扩枚举。
+    `app/main.py` 的 `OperationalError` 处理器只在驱动原文含 `locked` / `busy` 时用它，
+    其余 `OperationalError` 仍按 500 处理（避免把真正的实现缺陷伪装成"重试就好"）。
+    """
+
+    code = ErrorCode.INTERNAL_ERROR
+    http_status = 503
+    message = "Database is busy; please retry"
+
+
 # ---- Phase 1：模型 Provider（附录 A / 4.1.2） ----
 class ModelProviderNotFoundError(NotFoundError):
     """provider id 不存在（404）。"""

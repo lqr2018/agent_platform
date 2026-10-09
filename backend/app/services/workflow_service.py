@@ -99,6 +99,12 @@ _BACKGROUND_TASKS: set[asyncio.Task[None]] = set()
 ORPHAN_TIMEOUT_MULTIPLIER = 2
 """6.3 第 3 条：`started_at` 超过 `timeout × 2` 的 `running` 行才算孤儿（避免误伤慢 Run）。"""
 
+SHUTDOWN_GRACE_SECONDS = 5.0
+"""进程收尾时等待后台 Run 任务收敛终态的上限（秒）。
+
+`main.py` 的 lifespan 在 `dispose_engine()` 之前取消这些任务并等它们写完终态；
+超时未收敛的行由下次启动的 `converge_orphan_runs` 兜底（6.3 第 3 条）。"""
+
 RESUMABLE_ERROR_CODES: frozenset[str] = frozenset(
     {
         str(ErrorCode.MODEL_RATE_LIMITED),
@@ -522,6 +528,8 @@ async def cancel_run(
             if api_run is not None and str(api_run.status) not in run_service.TERMINAL_STATUSES:
                 api_run.status = str(RunStatus.CANCELED)
                 api_run.error_code = str(ErrorCode.RUN_CANCELED)
+                api_run.error_message = "Workflow run was canceled before it finished"
+                api_run.canceled_at = now
                 api_run.ended_at = now
         await session.commit()
         await session.refresh(workflow_run)
@@ -583,6 +591,7 @@ async def converge_orphan_runs(session: AsyncSession, settings: Settings) -> dic
         (await session.execute(select(WorkflowRun).where(WorkflowRun.status == str(RunStatus.RUNNING)))).scalars().all()
     )
     workflow_timeouts: dict[str, float] = {}
+    abandoned_ids: list[str] = []
     for row in workflow_rows:
         timeout = _workflow_timeout_seconds(row.definition_snapshot)
         workflow_timeouts[row.id] = timeout
@@ -594,6 +603,18 @@ async def converge_orphan_runs(session: AsyncSession, settings: Settings) -> dic
         row.ended_at = now
         row.latency_ms = int(_elapsed_seconds(row.started_at, now) * 1000)
         counts["workflow_runs"] += 1
+        abandoned_ids.append(row.id)
+
+    for abandoned_id in abandoned_ids:
+        # 节点行也要收尾：否则详情页的节点表会一直显示 `running`（4.5.3 的状态语义）
+        await _converge_running_node_runs(
+            session,
+            abandoned_id,
+            now=now,
+            status=RunStatus.FAILED,
+            error_code=str(ErrorCode.RUN_ABANDONED),
+            error_message="Workflow node was abandoned after a process restart",
+        )
 
     runs = (await session.execute(select(Run).where(Run.status == str(RunStatus.RUNNING)))).scalars().all()
     agent_ids = {row.agent_id for row in runs if row.agent_id}
@@ -924,6 +945,10 @@ async def _execute(
     SSE（`emit_queue` 非空时）只在内联模式下有消费者。
     """
     emitter: EventEmitter = QueueEmitter(emit_queue) if emit_queue is not None else NullEmitter()
+    canceled_exc: asyncio.CancelledError | None = None
+    """被取消时保存的取消异常（收尾后重新抛出，保留任务的取消语义，见 W2）。"""
+    finalized = False
+    """是否已在 session 内收敛过终态（外层兜底据此避免重复写入）。"""
     try:
         if registry is not None:
             await registry.acquire()
@@ -1009,11 +1034,17 @@ async def _execute(
             except AppError as exc:
                 status = RunStatus.CANCELED if str(exc.code) == str(ErrorCode.RUN_CANCELED) else RunStatus.FAILED
                 error = exc
+            except asyncio.CancelledError as exc:
+                # 进程收尾（lifespan 的 `shutdown_active_runs`）或外部取消：**仍要落终态**，
+                # 否则该行永远停在 `running`（W2）。收敛完再把取消抛回去，保留取消语义。
+                canceled_exc = exc
+                status = RunStatus.CANCELED
+                error = RunCanceledError("Workflow run was canceled")
             except Exception:
                 logger.error("workflow.run_unexpected_error", run_id=workflow_run_id, exc_info=True)
                 status = RunStatus.FAILED
                 error = InternalError("Unexpected error while running the workflow")
-            await _finalize(
+            finalized = await _finalize_resilient(
                 session=session,
                 workflow_run_id=workflow_run_id,
                 api_run_id=api_run_id,
@@ -1034,6 +1065,13 @@ async def _execute(
                 status=str(status),
                 error_code=str(error.code) if error is not None else None,
             )
+            if canceled_exc is not None:
+                raise canceled_exc
+    except asyncio.CancelledError:
+        # 取消发生在**排队等并发闸门**阶段（还没进 session）：没有 session 可收敛，走独立 session 兜底
+        if not finalized:
+            await _converge_canceled_run(workflow_run_id, api_run_id, reason="Workflow run was canceled")
+        raise
     finally:
         if emit_queue is not None:
             await emit_queue.put(None)
@@ -1074,6 +1112,19 @@ async def _finalize(
             if result.current_node_id is not None:
                 workflow_run.current_node_id = result.current_node_id
 
+    abandoned = await _converge_running_node_runs(
+        session,
+        workflow_run_id,
+        now=now,
+        status=RunStatus.CANCELED if status is RunStatus.CANCELED else RunStatus.FAILED,
+        error_code=error_code or str(ErrorCode.RUN_ABANDONED),
+        error_message=error_message or "Workflow run finished before this node did",
+    )
+    if abandoned:
+        # 引擎层的取消收尾（`_run_attempt` 的 `CancelledError` 分支）之外还有兜底：连接被摘掉 /
+        # 进程被掐停的行也在这里收干净（W3）
+        logger.warning("workflow.node_runs_converged", workflow_run_id=workflow_run_id, rows=abandoned)
+
     api_run = await session.get(Run, api_run_id)
     if api_run is not None:
         api_run.status = str(status)
@@ -1081,6 +1132,9 @@ async def _finalize(
         api_run.latency_ms = int(_elapsed_seconds(api_run.started_at, now) * 1000)
         api_run.error_code = error_code
         api_run.error_message = error_message
+        if status is RunStatus.CANCELED:
+            # 与 `run_service.cancel_run` / `finish_run` 的语义对齐（2.6）：取消时间必须可查
+            api_run.canceled_at = now
         api_run.steps = result.steps if result is not None else 0
         if result is not None:
             api_run.output = _jsonable(result.output)
@@ -1100,7 +1154,11 @@ async def _finalize(
         error_code=error_code,
         error_message=error_message,
     )
-    await span_sink.close_trace(run_trace, status=status, error_code=error_code, error_message=error_message)
+    # 观测是副产物（4.8.2）：`close_trace` 失败不能挡住会话事件通知与调用方的收尾逻辑
+    try:
+        await span_sink.close_trace(run_trace, status=status, error_code=error_code, error_message=error_message)
+    except Exception:
+        logger.warning("workflow.close_trace_failed", workflow_run_id=workflow_run_id, exc_info=True)
 
     if emit is None:
         return
@@ -1124,6 +1182,180 @@ async def _finalize(
             error_message=error_message or "",
         ),
     )
+
+
+async def _finalize_resilient(
+    *,
+    session: AsyncSession,
+    workflow_run_id: str,
+    api_run_id: str,
+    status: RunStatus,
+    result: WorkflowResult | None,
+    error: AppError | None,
+    runner: ServiceNodeRunner | None,
+    run_trace: RunTrace | None,
+    tracer: Tracer,
+    span_sink: trace_service.DatabaseSpanSink,
+    emit: EventEmitter | None,
+) -> bool:
+    """收敛终态（抗"session 已失效"）：失败时换**独立 session** 再收敛一次（W1）。
+
+    为什么需要：`asyncio.wait_for` 超时或任务取消会打断引擎里正在进行的 `commit()` ——
+    SQLAlchemy 把 session 标记成"必须 rollback"，直接调 `_finalize` 会抛 `PendingRollbackError`
+    穿透整条收尾路径，于是 `workflow_runs` / `runs` 永远停在 `running`、没有任何
+    `workflow.run_finished` 日志（实测：超时 12s 后仍为 running，且排除了 `database is locked`）。
+
+    返回是否成功落库：取消路径上据此决定要不要再兜底一次。
+    """
+    await _safe_rollback(session)
+    try:
+        await _finalize(
+            session=session,
+            workflow_run_id=workflow_run_id,
+            api_run_id=api_run_id,
+            status=status,
+            result=result,
+            error=error,
+            runner=runner,
+            run_trace=run_trace,
+            tracer=tracer,
+            span_sink=span_sink,
+            emit=emit,
+        )
+        return True
+    except Exception:
+        logger.error(
+            "workflow.finalize_failed",
+            workflow_run_id=workflow_run_id,
+            api_run_id=api_run_id,
+            status=str(status),
+            exc_info=True,
+        )
+    await _safe_rollback(session)
+    try:
+        async with get_sessionmaker()() as fresh_session:
+            await _finalize(
+                session=fresh_session,
+                workflow_run_id=workflow_run_id,
+                api_run_id=api_run_id,
+                status=status,
+                result=result,
+                error=error,
+                runner=runner,
+                run_trace=run_trace,
+                tracer=tracer,
+                span_sink=trace_service.DatabaseSpanSink(fresh_session),
+                emit=emit,
+            )
+        return True
+    except Exception:
+        logger.error(
+            "workflow.finalize_retry_failed",
+            workflow_run_id=workflow_run_id,
+            api_run_id=api_run_id,
+            status=str(status),
+            exc_info=True,
+        )
+        return False
+
+
+async def _safe_rollback(session: AsyncSession) -> None:
+    """回滚（幂等）：干净的 session 上再 rollback 是无害的 no-op。"""
+    try:
+        await session.rollback()
+    except Exception:  # pragma: no cover - 连接已断时 rollback 也可能失败
+        logger.warning("workflow.rollback_failed", exc_info=True)
+
+
+# ---- 独立 session 的收尾路径（W1 / W2 / W3 的兜底） ----
+async def _converge_running_node_runs(
+    session: AsyncSession,
+    workflow_run_id: str,
+    *,
+    now: datetime,
+    status: RunStatus,
+    error_code: str,
+    error_message: str,
+) -> int:
+    """把该 Run 仍停在 `running` 的 `node_runs` 行收尾（W3 的兜底）。
+
+    引擎的取消路径（`_run_attempt` 的 `CancelledError` 分支）已经会收尾当场那一行；这里覆盖
+    "`node_started` 已 commit、但收尾没机会执行"的窗口（连接被摘掉 / 进程被掐停 / 取消点落在
+    span 上下文里）——`node_runs` 不该出现永久 `running`，否则前端节点表一直转圈。
+    """
+    rows = (
+        (
+            await session.execute(
+                select(NodeRun).where(NodeRun.run_id == workflow_run_id, NodeRun.status == str(RunStatus.RUNNING))
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for row in rows:
+        row.status = str(status)
+        row.error_code = error_code
+        row.error_message = error_message
+        row.ended_at = now
+        row.latency_ms = int(_elapsed_seconds(row.started_at, now) * 1000)
+    return len(rows)
+
+
+async def _converge_canceled_run(workflow_run_id: str, api_run_id: str, *, reason: str) -> bool:
+    """用**独立 session** 把一行 Run 收敛为 `canceled`（进程收尾 / 排队阶段被取消的兜底，W1/W2）。
+
+    幂等：已经是终态的行不动；失败只记日志（不能因为收敛失败把"进程正在退出"变成异常）。
+    """
+    try:
+        async with get_sessionmaker()() as session:
+            now = _utcnow()
+            workflow_run = await session.get(WorkflowRun, workflow_run_id)
+            if workflow_run is not None and str(workflow_run.status) not in run_service.TERMINAL_STATUSES:
+                workflow_run.status = str(RunStatus.CANCELED)
+                workflow_run.error_code = str(ErrorCode.RUN_CANCELED)
+                workflow_run.error_message = reason
+                workflow_run.ended_at = now
+                workflow_run.latency_ms = int(_elapsed_seconds(workflow_run.started_at, now) * 1000)
+            api_run = await session.get(Run, api_run_id)
+            if api_run is not None and str(api_run.status) not in run_service.TERMINAL_STATUSES:
+                api_run.status = str(RunStatus.CANCELED)
+                api_run.error_code = str(ErrorCode.RUN_CANCELED)
+                api_run.error_message = reason
+                api_run.canceled_at = now
+                api_run.ended_at = now
+                api_run.latency_ms = int(_elapsed_seconds(api_run.started_at, now) * 1000)
+            await _converge_running_node_runs(
+                session,
+                workflow_run_id,
+                now=now,
+                status=RunStatus.CANCELED,
+                error_code=str(ErrorCode.RUN_CANCELED),
+                error_message=reason,
+            )
+            await session.commit()
+        return True
+    except Exception:
+        logger.error("workflow.cancel_converge_failed", workflow_run_id=workflow_run_id, exc_info=True)
+        return False
+
+
+async def shutdown_active_runs(*, timeout: float = SHUTDOWN_GRACE_SECONDS) -> int:
+    """进程收尾（W2）：取消仍在跑的后台 Run 任务，并给它们一次写终态的机会。
+
+    lifespan 的 `finally` 里、`dispose_engine()` **之前**调用：先取消 + 等收敛、再关连接池 ——
+    否则行会停在 `running`，且任务在池关闭后写库会直接报错。返回被取消的任务数（供日志/测试断言）。
+    超时未收敛的行由下次启动的 `converge_orphan_runs` 兜底（6.3 第 3 条）。
+    """
+    pending = [task for task in _BACKGROUND_TASKS if not task.done()]
+    if not pending:
+        return 0
+    for task in pending:
+        task.cancel()
+    _done, still_pending = await asyncio.wait(pending, timeout=timeout)
+    if still_pending:
+        logger.warning("workflow.shutdown_timeout", pending=len(still_pending), timeout=timeout)
+    logger.info("workflow.shutdown_finished", canceled=len(pending), pending=len(still_pending))
+    return len(pending)
 
 
 def _workflow_error(result: WorkflowResult) -> AppError:
