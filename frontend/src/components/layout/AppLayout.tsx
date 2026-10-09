@@ -19,8 +19,8 @@ const { Header, Sider, Content } = Layout;
  * 布局壳（详细设计 5.2 的菜单规则）。
  *
  * 只列**已实现**的页面：M1 = 总览 / Agent / 模型 / Chat / Trace；M2 = 工具、Workflow（Phase 3）；
- * Backlog 页面（记忆 / MCP / 评测台）不出现（SD-14②），是否显示入口由 `/api/v1/meta.features` 驱动。
- * 知识库（Phase 5）尚未实现 → 只留一条 disabled 的占位，不建空路由。
+ * M3 = 知识库（Phase 5）；Backlog 页面（记忆 / MCP / 评测台）不出现（SD-14②），
+ * 是否显示入口由 `/api/v1/meta.features` 驱动。
  */
 export default function AppLayout() {
   const location = useLocation();
@@ -60,10 +60,9 @@ export default function AppLayout() {
               { key: "/chat", icon: <MessageOutlined />, label: <Link to="/chat">Chat</Link> },
               { key: "/traces", icon: <ShareAltOutlined />, label: <Link to="/traces">Trace</Link> },
               {
-                key: "phase5",
+                key: "/knowledge",
                 icon: <ExperimentOutlined />,
-                label: "知识库（Phase 5）",
-                disabled: true,
+                label: <Link to="/knowledge">知识库</Link>,
               },
             ]}
           />

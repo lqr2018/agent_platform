@@ -6,7 +6,7 @@
 - Phase 2 的引用校验：`tool_ids` 必须指向**存在且 enabled** 的工具（4.2.2）；
 - Phase 3 的引用校验：`workflow_id` 必须指向**存在且 published** 的 Workflow（2.9：Agent 绑的是
   一个已发布的版本，`draft` 只能试跑不能被 Agent 引用）；
-  `knowledge_base_ids` 仍必须为空（Phase 5 落地，SD-14②：不为未实现的能力留入口）。
+- Phase 5 的引用校验：`knowledge_base_ids` 必须指向**存在且未软删**的知识库（4.4.2 的固定预检索）。
 """
 
 from __future__ import annotations
@@ -19,19 +19,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.enums import WorkflowStatus
 from app.core.errors import AgentInvalidConfigError, AgentNotFoundError, ConflictError
-from app.db.models import Agent, AgentPromptVersion, ModelProvider, Tool, Workflow
+from app.db.models import Agent, AgentPromptVersion, KnowledgeBase, ModelProvider, Tool, Workflow
 from app.db.models.agent import AGENT_STATUS_ENABLED, default_memory_config
 from app.db.models.tool import TOOL_STATUS_ENABLED
 from app.runtime.agent.state import AgentSpec
 from app.schemas.agent import AgentCloneRequest, AgentCreate, AgentUpdate
 
-UNSUPPORTED_FIELDS = {
-    "knowledge_base_ids": "KNOWLEDGE_BASES_NOT_AVAILABLE_IN_PHASE_5",
-}
-"""本 build 不允许的引用字段 → `AGENT_INVALID_CONFIG.details.reason`（供前端提示）。
-
-Phase 3 起 `workflow_id` 已经可用（见 `_validate_workflow`），故从本表移除。
-"""
+# Phase 5 起 `knowledge_base_ids` 已可用（见 `_validate_knowledge_bases`），因此本模块**不再有**
+# "本 build 不允许的引用字段"表（原 `UNSUPPORTED_FIELDS` 随 Phase 5 删除）。
 
 
 async def get_agent(session: AsyncSession, agent_id: str, *, include_deleted: bool = False) -> Agent:
@@ -64,7 +59,7 @@ async def list_agents(
 
 async def create_agent(session: AsyncSession, data: AgentCreate) -> Agent:
     """新建 Agent（校验引用与白名单，3.2.2 / 3.3.1）。"""
-    _reject_unsupported_fields(knowledge_base_ids=data.knowledge_base_ids)
+    await _validate_knowledge_bases(session, data.knowledge_base_ids)
     await _validate_model(session, provider_id=data.model_provider_id, model_name=data.model_name)
     await _validate_tools(session, data.tool_ids)
     await _validate_workflow(session, data.workflow_id)
@@ -112,6 +107,9 @@ async def update_agent(session: AsyncSession, agent_id: str, data: AgentUpdate) 
 
     if "workflow_id" in changes:
         await _validate_workflow(session, changes["workflow_id"])
+
+    if "knowledge_base_ids" in changes:
+        await _validate_knowledge_bases(session, changes["knowledge_base_ids"] or [])
 
     new_prompt = changes.pop("system_prompt", None)
     if new_prompt is not None and new_prompt != agent.system_prompt:
@@ -226,15 +224,32 @@ async def _ensure_name_available(session: AsyncSession, name: str) -> None:
         raise ConflictError(f"Agent name '{name}' already exists", details={"name": name})
 
 
-def _reject_unsupported_fields(*, knowledge_base_ids: Sequence[str]) -> None:
-    """不接受知识库引用（SD-14②：能力在 Phase 5 落地）。"""
-    if knowledge_base_ids:
+async def _validate_knowledge_bases(session: AsyncSession, knowledge_base_ids: Sequence[str]) -> None:
+    """Phase 5：`knowledge_base_ids` 必须指向**存在且未软删**的知识库（4.4.2 的固定预检索）。
+
+    与 `_validate_tools` 同一口径：不存在 / 已删除都在写入期就拒绝，避免运行期出现
+    "检索永远命中 0 条"这种看不出原因的隐性失败。
+    """
+    if not knowledge_base_ids:
+        return
+    rows = (
+        (
+            await session.execute(
+                select(KnowledgeBase).where(
+                    KnowledgeBase.id.in_(tuple(knowledge_base_ids)),
+                    KnowledgeBase.deleted_at.is_(None),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    known = {row.id for row in rows}
+    unknown = [kb_id for kb_id in knowledge_base_ids if kb_id not in known]
+    if unknown:
         raise AgentInvalidConfigError(
-            "This build does not support knowledge bases yet (Phase 5)",
-            details={
-                "reason": "PHASE_NOT_SUPPORTED",
-                "fields": {"knowledge_base_ids": UNSUPPORTED_FIELDS["knowledge_base_ids"]},
-            },
+            f"Unknown knowledge base(s): {', '.join(unknown)}",
+            details={"field": "knowledge_base_ids", "unknown": unknown},
         )
 
 

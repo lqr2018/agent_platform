@@ -314,6 +314,20 @@
             ],
             "title": "Description"
           },
+          "knowledge_base_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Knowledge Base Ids"
+          },
           "max_steps": {
             "anyOf": [
               {
@@ -489,6 +503,54 @@
         "title": "ApiResponse[ConversationRead]",
         "type": "object"
       },
+      "ApiResponse_DocumentRead_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/DocumentRead"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/ResponseMeta"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "ApiResponse[DocumentRead]",
+        "type": "object"
+      },
+      "ApiResponse_KnowledgeBaseRead_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/KnowledgeBaseRead"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/ResponseMeta"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "ApiResponse[KnowledgeBaseRead]",
+        "type": "object"
+      },
+      "ApiResponse_MaintenanceResultRead_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/MaintenanceResultRead"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/ResponseMeta"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "ApiResponse[MaintenanceResultRead]",
+        "type": "object"
+      },
       "ApiResponse_MetaData_": {
         "properties": {
           "data": {
@@ -535,6 +597,22 @@
           "meta"
         ],
         "title": "ApiResponse[ProviderTestResult]",
+        "type": "object"
+      },
+      "ApiResponse_QueryResultRead_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/QueryResultRead"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/ResponseMeta"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "ApiResponse[QueryResultRead]",
         "type": "object"
       },
       "ApiResponse_RunRead_": {
@@ -705,6 +783,26 @@
         "title": "ApiResponse[list[AgentRead]]",
         "type": "object"
       },
+      "ApiResponse_list_ChunkRead__": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/ChunkRead"
+            },
+            "title": "Data",
+            "type": "array"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/ResponseMeta"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "ApiResponse[list[ChunkRead]]",
+        "type": "object"
+      },
       "ApiResponse_list_ConversationRead__": {
         "properties": {
           "data": {
@@ -723,6 +821,46 @@
           "meta"
         ],
         "title": "ApiResponse[list[ConversationRead]]",
+        "type": "object"
+      },
+      "ApiResponse_list_DocumentRead__": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/DocumentRead"
+            },
+            "title": "Data",
+            "type": "array"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/ResponseMeta"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "ApiResponse[list[DocumentRead]]",
+        "type": "object"
+      },
+      "ApiResponse_list_KnowledgeBaseRead__": {
+        "properties": {
+          "data": {
+            "items": {
+              "$ref": "#/components/schemas/KnowledgeBaseRead"
+            },
+            "title": "Data",
+            "type": "array"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/ResponseMeta"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "ApiResponse[list[KnowledgeBaseRead]]",
         "type": "object"
       },
       "ApiResponse_list_MessageRead__": {
@@ -905,6 +1043,70 @@
         "title": "ApiResponse[list[WorkflowRunRead]]",
         "type": "object"
       },
+      "Body_upload_document_api_v1_knowledge_bases__kb_id__documents_post": {
+        "properties": {
+          "file": {
+            "contentMediaType": "application/octet-stream",
+            "description": "md / txt 文档；pdf 与 url 属迭代 E",
+            "title": "File",
+            "type": "string"
+          }
+        },
+        "required": [
+          "file"
+        ],
+        "title": "Body_upload_document_api_v1_knowledge_bases__kb_id__documents_post",
+        "type": "object"
+      },
+      "ChunkRead": {
+        "description": "切片（3.2.5 的切片预览，分页返回）。",
+        "properties": {
+          "content": {
+            "title": "Content",
+            "type": "string"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "document_id": {
+            "title": "Document Id",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "meta": {
+            "additionalProperties": true,
+            "title": "Meta",
+            "type": "object"
+          },
+          "ordinal": {
+            "title": "Ordinal",
+            "type": "integer"
+          },
+          "token_count": {
+            "default": 0,
+            "title": "Token Count",
+            "type": "integer"
+          },
+          "vector_id": {
+            "default": "",
+            "title": "Vector Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "document_id",
+          "ordinal",
+          "content",
+          "created_at"
+        ],
+        "title": "ChunkRead",
+        "type": "object"
+      },
       "ConversationCreate": {
         "properties": {
           "agent_id": {
@@ -1024,6 +1226,102 @@
         "title": "ConversationUpdate",
         "type": "object"
       },
+      "DocumentRead": {
+        "description": "文档详情 / 列表项（含摄取状态与失败原因，3.2.5）。",
+        "properties": {
+          "checksum": {
+            "default": "",
+            "title": "Checksum",
+            "type": "string"
+          },
+          "chunk_count": {
+            "default": 0,
+            "title": "Chunk Count",
+            "type": "integer"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message"
+          },
+          "filename": {
+            "title": "Filename",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kb_id": {
+            "title": "Kb Id",
+            "type": "string"
+          },
+          "meta": {
+            "additionalProperties": true,
+            "title": "Meta",
+            "type": "object"
+          },
+          "mime_type": {
+            "default": "",
+            "title": "Mime Type",
+            "type": "string"
+          },
+          "size_bytes": {
+            "default": 0,
+            "title": "Size Bytes",
+            "type": "integer"
+          },
+          "source_type": {
+            "default": "file",
+            "title": "Source Type",
+            "type": "string"
+          },
+          "status": {
+            "default": "pending",
+            "title": "Status",
+            "type": "string"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          },
+          "uri": {
+            "default": "",
+            "title": "Uri",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kb_id",
+          "filename",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "DocumentRead",
+        "type": "object"
+      },
       "HTTPValidationError": {
         "properties": {
           "detail": {
@@ -1063,6 +1361,304 @@
           "app_env"
         ],
         "title": "HealthzResponse",
+        "type": "object"
+      },
+      "KnowledgeBaseCreate": {
+        "description": "`POST /api/v1/knowledge-bases`（3.2.5：新建时探测 `embedding_dim`）。",
+        "properties": {
+          "chunk_overlap": {
+            "default": 120,
+            "maximum": 1000.0,
+            "minimum": 0.0,
+            "title": "Chunk Overlap",
+            "type": "integer"
+          },
+          "chunk_size": {
+            "default": 800,
+            "maximum": 4000.0,
+            "minimum": 100.0,
+            "title": "Chunk Size",
+            "type": "integer"
+          },
+          "description": {
+            "default": "",
+            "title": "Description",
+            "type": "string"
+          },
+          "embedding_model": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Embedding Model",
+            "type": "string"
+          },
+          "embedding_provider_id": {
+            "maxLength": 26,
+            "minLength": 26,
+            "title": "Embedding Provider Id",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 120,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "score_threshold": {
+            "default": 0.3,
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "title": "Score Threshold",
+            "type": "number"
+          },
+          "splitter": {
+            "default": "recursive",
+            "enum": [
+              "recursive",
+              "markdown"
+            ],
+            "title": "Splitter",
+            "type": "string"
+          },
+          "top_k": {
+            "default": 5,
+            "maximum": 20.0,
+            "minimum": 1.0,
+            "title": "Top K",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name",
+          "embedding_provider_id",
+          "embedding_model"
+        ],
+        "title": "KnowledgeBaseCreate",
+        "type": "object"
+      },
+      "KnowledgeBaseRead": {
+        "description": "KB 详情 / 列表项（含 `stats`，3.2.5）。",
+        "properties": {
+          "chunk_overlap": {
+            "default": 120,
+            "title": "Chunk Overlap",
+            "type": "integer"
+          },
+          "chunk_size": {
+            "default": 800,
+            "title": "Chunk Size",
+            "type": "integer"
+          },
+          "collection_name": {
+            "title": "Collection Name",
+            "type": "string"
+          },
+          "created_at": {
+            "title": "Created At",
+            "type": "string"
+          },
+          "deleted_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Deleted At"
+          },
+          "description": {
+            "default": "",
+            "title": "Description",
+            "type": "string"
+          },
+          "embedding_dim": {
+            "default": 0,
+            "title": "Embedding Dim",
+            "type": "integer"
+          },
+          "embedding_model": {
+            "title": "Embedding Model",
+            "type": "string"
+          },
+          "embedding_provider_id": {
+            "title": "Embedding Provider Id",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "rerank_enabled": {
+            "default": false,
+            "title": "Rerank Enabled",
+            "type": "boolean"
+          },
+          "retriever_kind": {
+            "default": "vector",
+            "title": "Retriever Kind",
+            "type": "string"
+          },
+          "score_threshold": {
+            "default": 0.3,
+            "title": "Score Threshold",
+            "type": "number"
+          },
+          "splitter": {
+            "default": "recursive",
+            "title": "Splitter",
+            "type": "string"
+          },
+          "stats": {
+            "additionalProperties": true,
+            "title": "Stats",
+            "type": "object"
+          },
+          "status": {
+            "default": "ready",
+            "title": "Status",
+            "type": "string"
+          },
+          "top_k": {
+            "default": 5,
+            "title": "Top K",
+            "type": "integer"
+          },
+          "updated_at": {
+            "title": "Updated At",
+            "type": "string"
+          },
+          "vector_store_kind": {
+            "default": "chroma",
+            "title": "Vector Store Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "embedding_provider_id",
+          "embedding_model",
+          "collection_name",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "KnowledgeBaseRead",
+        "type": "object"
+      },
+      "KnowledgeBaseUpdate": {
+        "description": "`PATCH /api/v1/knowledge-bases/{id}`：只传需要改的字段。",
+        "properties": {
+          "chunk_overlap": {
+            "anyOf": [
+              {
+                "maximum": 1000.0,
+                "minimum": 0.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chunk Overlap"
+          },
+          "chunk_size": {
+            "anyOf": [
+              {
+                "maximum": 4000.0,
+                "minimum": 100.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Chunk Size"
+          },
+          "description": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Description"
+          },
+          "embedding_model": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Embedding Model"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "maxLength": 120,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "score_threshold": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Score Threshold"
+          },
+          "splitter": {
+            "anyOf": [
+              {
+                "enum": [
+                  "recursive",
+                  "markdown"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Splitter"
+          },
+          "top_k": {
+            "anyOf": [
+              {
+                "maximum": 20.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Top K"
+          }
+        },
+        "title": "KnowledgeBaseUpdate",
         "type": "object"
       },
       "LongTermConfigDTO": {
@@ -1121,6 +1717,30 @@
           }
         },
         "title": "LongTermConfigDTO",
+        "type": "object"
+      },
+      "MaintenanceResultRead": {
+        "description": "维护端点（`/maintenance` 下的对账与收敛）的返回。",
+        "properties": {
+          "data": {
+            "additionalProperties": true,
+            "title": "Data",
+            "type": "object"
+          },
+          "detail": {
+            "default": "",
+            "title": "Detail",
+            "type": "string"
+          },
+          "ok": {
+            "title": "Ok",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "ok"
+        ],
+        "title": "MaintenanceResultRead",
         "type": "object"
       },
       "MemoryConfigDTO": {
@@ -1952,6 +2572,139 @@
           }
         },
         "title": "ProviderUpdate",
+        "type": "object"
+      },
+      "QueryHitRead": {
+        "description": "一条命中（含 4.6.3 的引用来源串，前端引用卡片直接渲染）。",
+        "properties": {
+          "chunk_id": {
+            "title": "Chunk Id",
+            "type": "string"
+          },
+          "content": {
+            "title": "Content",
+            "type": "string"
+          },
+          "document_id": {
+            "title": "Document Id",
+            "type": "string"
+          },
+          "kb_id": {
+            "title": "Kb Id",
+            "type": "string"
+          },
+          "meta": {
+            "additionalProperties": true,
+            "title": "Meta",
+            "type": "object"
+          },
+          "score": {
+            "title": "Score",
+            "type": "number"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "chunk_id",
+          "document_id",
+          "kb_id",
+          "score",
+          "content",
+          "source"
+        ],
+        "title": "QueryHitRead",
+        "type": "object"
+      },
+      "QueryRequest": {
+        "description": "`POST /knowledge-bases/{id}/query`（3.2.5：直接检索，前端调试与评测用）。",
+        "properties": {
+          "kb_ids": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kb Ids"
+          },
+          "query": {
+            "maxLength": 2000,
+            "minLength": 1,
+            "title": "Query",
+            "type": "string"
+          },
+          "score_threshold": {
+            "anyOf": [
+              {
+                "maximum": 1.0,
+                "minimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Score Threshold"
+          },
+          "top_k": {
+            "anyOf": [
+              {
+                "maximum": 50.0,
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Top K"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "title": "QueryRequest",
+        "type": "object"
+      },
+      "QueryResultRead": {
+        "description": "检索结果（`hit_count == 0` 时 `chunks` 为空数组，不报错 —— 4.6.3 的\"未命中\"是正常结果）。",
+        "properties": {
+          "chunks": {
+            "items": {
+              "$ref": "#/components/schemas/QueryHitRead"
+            },
+            "title": "Chunks",
+            "type": "array"
+          },
+          "hit_count": {
+            "default": 0,
+            "title": "Hit Count",
+            "type": "integer"
+          },
+          "kb_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Kb Ids",
+            "type": "array"
+          },
+          "query": {
+            "title": "Query",
+            "type": "string"
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "title": "QueryResultRead",
         "type": "object"
       },
       "ReadyzCheck": {
@@ -4505,6 +5258,639 @@
         "summary": "一轮对话，返回 SSE 流",
         "tags": [
           "chat"
+        ]
+      }
+    },
+    "/api/v1/knowledge-bases": {
+      "get": {
+        "operationId": "list_knowledge_bases_api_v1_knowledge_bases_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Q"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_list_KnowledgeBaseRead__"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "知识库列表（?q=）",
+        "tags": [
+          "knowledge-bases"
+        ]
+      },
+      "post": {
+        "operationId": "create_knowledge_base_api_v1_knowledge_bases_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KnowledgeBaseCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_KnowledgeBaseRead_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "新建知识库（探测 embedding_dim）",
+        "tags": [
+          "knowledge-bases"
+        ]
+      }
+    },
+    "/api/v1/knowledge-bases/{kb_id}": {
+      "delete": {
+        "operationId": "delete_knowledge_base_api_v1_knowledge_bases__kb_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "kb_id",
+            "required": true,
+            "schema": {
+              "title": "Kb Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "删除知识库（含向量集合）",
+        "tags": [
+          "knowledge-bases"
+        ]
+      },
+      "get": {
+        "operationId": "get_knowledge_base_api_v1_knowledge_bases__kb_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "kb_id",
+            "required": true,
+            "schema": {
+              "title": "Kb Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_KnowledgeBaseRead_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "知识库详情",
+        "tags": [
+          "knowledge-bases"
+        ]
+      },
+      "patch": {
+        "operationId": "update_knowledge_base_api_v1_knowledge_bases__kb_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "kb_id",
+            "required": true,
+            "schema": {
+              "title": "Kb Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KnowledgeBaseUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_KnowledgeBaseRead_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "更新知识库",
+        "tags": [
+          "knowledge-bases"
+        ]
+      }
+    },
+    "/api/v1/knowledge-bases/{kb_id}/documents": {
+      "get": {
+        "operationId": "list_documents_api_v1_knowledge_bases__kb_id__documents_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "kb_id",
+            "required": true,
+            "schema": {
+              "title": "Kb Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_list_DocumentRead__"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "文档列表（?status=）",
+        "tags": [
+          "knowledge-bases"
+        ]
+      },
+      "post": {
+        "operationId": "upload_document_api_v1_knowledge_bases__kb_id__documents_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "kb_id",
+            "required": true,
+            "schema": {
+              "title": "Kb Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_upload_document_api_v1_knowledge_bases__kb_id__documents_post"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_DocumentRead_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "上传文档（multipart）→ 202 + pending",
+        "tags": [
+          "knowledge-bases"
+        ]
+      }
+    },
+    "/api/v1/knowledge-bases/{kb_id}/documents/{doc_id}": {
+      "delete": {
+        "operationId": "delete_document_api_v1_knowledge_bases__kb_id__documents__doc_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "kb_id",
+            "required": true,
+            "schema": {
+              "title": "Kb Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "doc_id",
+            "required": true,
+            "schema": {
+              "title": "Doc Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "删除文档（含切片与向量）",
+        "tags": [
+          "knowledge-bases"
+        ]
+      },
+      "get": {
+        "operationId": "get_document_api_v1_knowledge_bases__kb_id__documents__doc_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "kb_id",
+            "required": true,
+            "schema": {
+              "title": "Kb Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "doc_id",
+            "required": true,
+            "schema": {
+              "title": "Doc Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_DocumentRead_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "文档详情",
+        "tags": [
+          "knowledge-bases"
+        ]
+      }
+    },
+    "/api/v1/knowledge-bases/{kb_id}/documents/{doc_id}/chunks": {
+      "get": {
+        "operationId": "list_chunks_api_v1_knowledge_bases__kb_id__documents__doc_id__chunks_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "kb_id",
+            "required": true,
+            "schema": {
+              "title": "Kb Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "doc_id",
+            "required": true,
+            "schema": {
+              "title": "Doc Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "default": 0,
+              "minimum": 0,
+              "title": "Offset",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 50,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_list_ChunkRead__"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "切片预览（分页）",
+        "tags": [
+          "knowledge-bases"
+        ]
+      }
+    },
+    "/api/v1/knowledge-bases/{kb_id}/documents/{doc_id}/reingest": {
+      "post": {
+        "operationId": "reingest_document_api_v1_knowledge_bases__kb_id__documents__doc_id__reingest_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "kb_id",
+            "required": true,
+            "schema": {
+              "title": "Kb Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "doc_id",
+            "required": true,
+            "schema": {
+              "title": "Doc Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_DocumentRead_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "重新摄取（改 chunk 参数后用）→ 202 + pending",
+        "tags": [
+          "knowledge-bases"
+        ]
+      }
+    },
+    "/api/v1/knowledge-bases/{kb_id}/query": {
+      "post": {
+        "operationId": "query_knowledge_base_api_v1_knowledge_bases__kb_id__query_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "kb_id",
+            "required": true,
+            "schema": {
+              "title": "Kb Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/QueryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_QueryResultRead_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "检索试算（?多 KB 用 kb_ids）",
+        "tags": [
+          "knowledge-bases"
+        ]
+      }
+    },
+    "/api/v1/maintenance/knowledge-bases/{kb_id}/verify-index": {
+      "get": {
+        "operationId": "verify_kb_index_api_v1_maintenance_knowledge_bases__kb_id__verify_index_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "kb_id",
+            "required": true,
+            "schema": {
+              "title": "Kb Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_MaintenanceResultRead_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "向量与 DB 的一致性对账",
+        "tags": [
+          "maintenance"
         ]
       }
     },

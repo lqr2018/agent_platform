@@ -43,8 +43,10 @@ from app.core.errors import (
 from app.core.logging import configure_logging, get_logger
 from app.db import session as db_session
 from app.runtime.observability import context as trace_context
+from app.runtime.rag import reset_memory_vector_store
 from app.schemas.common import ErrorResponse
-from app.services import run_service, tool_service, workflow_service
+from app.services import kb_service, run_service, tool_service, workflow_service
+from app.services.task_runner import get_task_runner
 
 logger = get_logger(__name__)
 
@@ -231,6 +233,23 @@ async def _converge_orphan_runs() -> None:
         logger.info("startup.orphan_runs_converged", **counts)
 
 
+async def _converge_interrupted_documents() -> None:
+    """Phase 5：把上次进程留下的 `parsing/chunking/embedding` 文档收敛为 `failed`。
+
+    与 `_converge_orphan_runs` 同一思路（6.3 第 3 条）：进程重启后队列里的摄取任务不会再跑，
+    不收敛的话文档会永远停在中间态（4.6.2 + `services/task_runner.py` 的"启动收敛"说明）。
+    失败只记日志、不阻断启动。
+    """
+    try:
+        async with db_session.get_sessionmaker()() as session:
+            count = await kb_service.converge_interrupted_documents(session)
+    except Exception:
+        logger.warning("startup.interrupted_documents_failed", exc_info=True)
+        return
+    if count:
+        logger.info("startup.interrupted_documents_converged", count=count)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
@@ -240,9 +259,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.debug("startup.dir_ready", name=name, path=str(path))
     app.state.settings = settings
     app.state.features = build_features(settings)
+    # Phase 5：每次启动重建进程内单例（摄取队列与 memory 向量库都不跨"应用实例"复用；
+    # 测试里多个 app 实例共用一个进程，重建才能保证互不污染）
+    get_task_runner(settings, reset=True)
+    reset_memory_vector_store()
     await db_session.verify_migrations_at_head()
     await _sync_builtin_tools()
     await _converge_orphan_runs()
+    await _converge_interrupted_documents()
     logger.info(
         "app.startup",
         name=APP_NAME,
@@ -258,6 +282,10 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         canceled_runs = await workflow_service.shutdown_active_runs()
         if canceled_runs:
             logger.info("app.shutdown_runs_converged", canceled=canceled_runs)
+        # Phase 5：停摄取队列（等当前 job 收尾/取消），再关连接池 —— 顺序与上一行同理
+        canceled_ingestions = await get_task_runner().stop()
+        if canceled_ingestions:
+            logger.info("app.shutdown_ingestions_converged", canceled=canceled_ingestions)
         run_service.reset_run_registry()
         await db_session.dispose_engine()
         logger.info("app.shutdown")

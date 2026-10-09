@@ -9,8 +9,6 @@
 
 from __future__ import annotations
 
-import os
-
 from fastapi import APIRouter, Request, Response, status
 from pydantic import BaseModel
 
@@ -18,6 +16,7 @@ from app import APP_NAME, __version__
 from app.core.config import Settings, get_settings
 from app.db import session as db_session
 from app.schemas.common import ApiResponse
+from app.services import kb_service
 
 probe_router = APIRouter(tags=["infra"])
 meta_router = APIRouter(tags=["infra"])
@@ -75,20 +74,14 @@ def build_features(settings: Settings) -> MetaFeatures:
     )
 
 
-def _check_vector_store(settings: Settings) -> ReadyzCheck:
+async def _check_vector_store(settings: Settings) -> ReadyzCheck:
     """向量库可达性（6.3 第 4 条）。
 
-    Phase 0：`chroma` 校验目录存在且可写（启动时已创建，缺失说明卷没挂上）；
-    Phase 5 接入 Chroma 后替换为真实的 collection 探测。
+    Phase 5 起是**真实探测**：`chroma` 走 `PersistentClient.heartbeat()`（目录存在 + 可写 + 能建会话），
+    `memory` 恒 ok（进程内实现没有外部依赖）；实现见 `services/kb_service.vector_store_health`。
     """
-    if settings.vector_store_kind == "memory":
-        return ReadyzCheck(name="vector_store", ok=True, detail="memory (in-process)")
-    path = settings.chroma_path
-    if not path.exists():
-        return ReadyzCheck(name="vector_store", ok=False, detail=f"directory missing: {path}")
-    if not os.access(path, os.W_OK):
-        return ReadyzCheck(name="vector_store", ok=False, detail=f"directory not writable: {path}")
-    return ReadyzCheck(name="vector_store", ok=True, detail=f"writable: {path}")
+    ok, detail = await kb_service.vector_store_health(settings)
+    return ReadyzCheck(name="vector_store", ok=ok, detail=detail)
 
 
 @probe_router.get("/healthz", response_model=HealthzResponse, summary="存活探针")
@@ -108,7 +101,7 @@ async def readyz(response: Response) -> ReadyzResponse:
     db_ok, db_detail = await db_session.check_database()
     checks = [
         ReadyzCheck(name="database", ok=db_ok, detail=db_detail),
-        _check_vector_store(settings),
+        await _check_vector_store(settings),
     ]
     healthy = all(check.ok for check in checks)
     if not healthy:

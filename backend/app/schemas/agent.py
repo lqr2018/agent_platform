@@ -72,6 +72,8 @@ class AgentUpdate(BaseModel):
     model_params: dict[str, object] | None = None
     system_prompt: str | None = None
     memory_config: MemoryConfigDTO | None = None
+    knowledge_base_ids: list[str] | None = None
+    """Phase 5：整体替换绑定列表（服务层校验存在性；`[]` 表示解绑）。"""
     max_steps: int | None = Field(default=None, ge=1, le=50)
     timeout_seconds: int | None = Field(default=None, ge=1, le=3600)
     tags: list[str] | None = None

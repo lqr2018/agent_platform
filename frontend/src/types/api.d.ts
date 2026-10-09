@@ -130,6 +130,147 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/knowledge-bases": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 知识库列表（?q=） */
+        get: operations["list_knowledge_bases_api_v1_knowledge_bases_get"];
+        put?: never;
+        /** 新建知识库（探测 embedding_dim） */
+        post: operations["create_knowledge_base_api_v1_knowledge_bases_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/knowledge-bases/{kb_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 知识库详情 */
+        get: operations["get_knowledge_base_api_v1_knowledge_bases__kb_id__get"];
+        put?: never;
+        post?: never;
+        /** 删除知识库（含向量集合） */
+        delete: operations["delete_knowledge_base_api_v1_knowledge_bases__kb_id__delete"];
+        options?: never;
+        head?: never;
+        /** 更新知识库 */
+        patch: operations["update_knowledge_base_api_v1_knowledge_bases__kb_id__patch"];
+        trace?: never;
+    };
+    "/api/v1/knowledge-bases/{kb_id}/documents": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 文档列表（?status=） */
+        get: operations["list_documents_api_v1_knowledge_bases__kb_id__documents_get"];
+        put?: never;
+        /** 上传文档（multipart）→ 202 + pending */
+        post: operations["upload_document_api_v1_knowledge_bases__kb_id__documents_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/knowledge-bases/{kb_id}/documents/{doc_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 文档详情 */
+        get: operations["get_document_api_v1_knowledge_bases__kb_id__documents__doc_id__get"];
+        put?: never;
+        post?: never;
+        /** 删除文档（含切片与向量） */
+        delete: operations["delete_document_api_v1_knowledge_bases__kb_id__documents__doc_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/knowledge-bases/{kb_id}/documents/{doc_id}/chunks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 切片预览（分页） */
+        get: operations["list_chunks_api_v1_knowledge_bases__kb_id__documents__doc_id__chunks_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/knowledge-bases/{kb_id}/documents/{doc_id}/reingest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 重新摄取（改 chunk 参数后用）→ 202 + pending */
+        post: operations["reingest_document_api_v1_knowledge_bases__kb_id__documents__doc_id__reingest_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/knowledge-bases/{kb_id}/query": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** 检索试算（?多 KB 用 kb_ids） */
+        post: operations["query_knowledge_base_api_v1_knowledge_bases__kb_id__query_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/maintenance/knowledge-bases/{kb_id}/verify-index": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** 向量与 DB 的一致性对账 */
+        get: operations["verify_kb_index_api_v1_maintenance_knowledge_bases__kb_id__verify_index_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/meta": {
         parameters: {
             query?: never;
@@ -792,6 +933,8 @@ export interface components {
         AgentUpdate: {
             /** Description */
             description?: string | null;
+            /** Knowledge Base Ids */
+            knowledge_base_ids?: string[] | null;
             /** Max Steps */
             max_steps?: number | null;
             memory_config?: components["schemas"]["MemoryConfigDTO"] | null;
@@ -826,6 +969,21 @@ export interface components {
             data: components["schemas"]["ConversationRead"];
             meta: components["schemas"]["ResponseMeta"];
         };
+        /** ApiResponse[DocumentRead] */
+        ApiResponse_DocumentRead_: {
+            data: components["schemas"]["DocumentRead"];
+            meta: components["schemas"]["ResponseMeta"];
+        };
+        /** ApiResponse[KnowledgeBaseRead] */
+        ApiResponse_KnowledgeBaseRead_: {
+            data: components["schemas"]["KnowledgeBaseRead"];
+            meta: components["schemas"]["ResponseMeta"];
+        };
+        /** ApiResponse[MaintenanceResultRead] */
+        ApiResponse_MaintenanceResultRead_: {
+            data: components["schemas"]["MaintenanceResultRead"];
+            meta: components["schemas"]["ResponseMeta"];
+        };
         /** ApiResponse[MetaData] */
         ApiResponse_MetaData_: {
             data: components["schemas"]["MetaData"];
@@ -839,6 +997,11 @@ export interface components {
         /** ApiResponse[ProviderTestResult] */
         ApiResponse_ProviderTestResult_: {
             data: components["schemas"]["ProviderTestResult"];
+            meta: components["schemas"]["ResponseMeta"];
+        };
+        /** ApiResponse[QueryResultRead] */
+        ApiResponse_QueryResultRead_: {
+            data: components["schemas"]["QueryResultRead"];
             meta: components["schemas"]["ResponseMeta"];
         };
         /** ApiResponse[RunRead] */
@@ -893,10 +1056,28 @@ export interface components {
             data: components["schemas"]["AgentRead"][];
             meta: components["schemas"]["ResponseMeta"];
         };
+        /** ApiResponse[list[ChunkRead]] */
+        ApiResponse_list_ChunkRead__: {
+            /** Data */
+            data: components["schemas"]["ChunkRead"][];
+            meta: components["schemas"]["ResponseMeta"];
+        };
         /** ApiResponse[list[ConversationRead]] */
         ApiResponse_list_ConversationRead__: {
             /** Data */
             data: components["schemas"]["ConversationRead"][];
+            meta: components["schemas"]["ResponseMeta"];
+        };
+        /** ApiResponse[list[DocumentRead]] */
+        ApiResponse_list_DocumentRead__: {
+            /** Data */
+            data: components["schemas"]["DocumentRead"][];
+            meta: components["schemas"]["ResponseMeta"];
+        };
+        /** ApiResponse[list[KnowledgeBaseRead]] */
+        ApiResponse_list_KnowledgeBaseRead__: {
+            /** Data */
+            data: components["schemas"]["KnowledgeBaseRead"][];
             meta: components["schemas"]["ResponseMeta"];
         };
         /** ApiResponse[list[MessageRead]] */
@@ -953,6 +1134,44 @@ export interface components {
             data: components["schemas"]["WorkflowRunRead"][];
             meta: components["schemas"]["ResponseMeta"];
         };
+        /** Body_upload_document_api_v1_knowledge_bases__kb_id__documents_post */
+        Body_upload_document_api_v1_knowledge_bases__kb_id__documents_post: {
+            /**
+             * File
+             * @description md / txt 文档；pdf 与 url 属迭代 E
+             */
+            file: string;
+        };
+        /**
+         * ChunkRead
+         * @description 切片（3.2.5 的切片预览，分页返回）。
+         */
+        ChunkRead: {
+            /** Content */
+            content: string;
+            /** Created At */
+            created_at: string;
+            /** Document Id */
+            document_id: string;
+            /** Id */
+            id: string;
+            /** Meta */
+            meta?: {
+                [key: string]: unknown;
+            };
+            /** Ordinal */
+            ordinal: number;
+            /**
+             * Token Count
+             * @default 0
+             */
+            token_count: number;
+            /**
+             * Vector Id
+             * @default
+             */
+            vector_id: string;
+        };
         /** ConversationCreate */
         ConversationCreate: {
             /** Agent Id */
@@ -1000,6 +1219,65 @@ export interface components {
             /** Title */
             title?: string | null;
         };
+        /**
+         * DocumentRead
+         * @description 文档详情 / 列表项（含摄取状态与失败原因，3.2.5）。
+         */
+        DocumentRead: {
+            /**
+             * Checksum
+             * @default
+             */
+            checksum: string;
+            /**
+             * Chunk Count
+             * @default 0
+             */
+            chunk_count: number;
+            /** Created At */
+            created_at: string;
+            /** Error Code */
+            error_code?: string | null;
+            /** Error Message */
+            error_message?: string | null;
+            /** Filename */
+            filename: string;
+            /** Id */
+            id: string;
+            /** Kb Id */
+            kb_id: string;
+            /** Meta */
+            meta?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Mime Type
+             * @default
+             */
+            mime_type: string;
+            /**
+             * Size Bytes
+             * @default 0
+             */
+            size_bytes: number;
+            /**
+             * Source Type
+             * @default file
+             */
+            source_type: string;
+            /**
+             * Status
+             * @default pending
+             */
+            status: string;
+            /** Updated At */
+            updated_at: string;
+            /**
+             * Uri
+             * @default
+             */
+            uri: string;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -1024,6 +1302,152 @@ export interface components {
              * @default 0.1.0
              */
             version: string;
+        };
+        /**
+         * KnowledgeBaseCreate
+         * @description `POST /api/v1/knowledge-bases`（3.2.5：新建时探测 `embedding_dim`）。
+         */
+        KnowledgeBaseCreate: {
+            /**
+             * Chunk Overlap
+             * @default 120
+             */
+            chunk_overlap: number;
+            /**
+             * Chunk Size
+             * @default 800
+             */
+            chunk_size: number;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /** Embedding Model */
+            embedding_model: string;
+            /** Embedding Provider Id */
+            embedding_provider_id: string;
+            /** Name */
+            name: string;
+            /**
+             * Score Threshold
+             * @default 0.3
+             */
+            score_threshold: number;
+            /**
+             * Splitter
+             * @default recursive
+             * @enum {string}
+             */
+            splitter: "recursive" | "markdown";
+            /**
+             * Top K
+             * @default 5
+             */
+            top_k: number;
+        };
+        /**
+         * KnowledgeBaseRead
+         * @description KB 详情 / 列表项（含 `stats`，3.2.5）。
+         */
+        KnowledgeBaseRead: {
+            /**
+             * Chunk Overlap
+             * @default 120
+             */
+            chunk_overlap: number;
+            /**
+             * Chunk Size
+             * @default 800
+             */
+            chunk_size: number;
+            /** Collection Name */
+            collection_name: string;
+            /** Created At */
+            created_at: string;
+            /** Deleted At */
+            deleted_at?: string | null;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /**
+             * Embedding Dim
+             * @default 0
+             */
+            embedding_dim: number;
+            /** Embedding Model */
+            embedding_model: string;
+            /** Embedding Provider Id */
+            embedding_provider_id: string;
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /**
+             * Rerank Enabled
+             * @default false
+             */
+            rerank_enabled: boolean;
+            /**
+             * Retriever Kind
+             * @default vector
+             */
+            retriever_kind: string;
+            /**
+             * Score Threshold
+             * @default 0.3
+             */
+            score_threshold: number;
+            /**
+             * Splitter
+             * @default recursive
+             */
+            splitter: string;
+            /** Stats */
+            stats?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Status
+             * @default ready
+             */
+            status: string;
+            /**
+             * Top K
+             * @default 5
+             */
+            top_k: number;
+            /** Updated At */
+            updated_at: string;
+            /**
+             * Vector Store Kind
+             * @default chroma
+             */
+            vector_store_kind: string;
+        };
+        /**
+         * KnowledgeBaseUpdate
+         * @description `PATCH /api/v1/knowledge-bases/{id}`：只传需要改的字段。
+         */
+        KnowledgeBaseUpdate: {
+            /** Chunk Overlap */
+            chunk_overlap?: number | null;
+            /** Chunk Size */
+            chunk_size?: number | null;
+            /** Description */
+            description?: string | null;
+            /** Embedding Model */
+            embedding_model?: string | null;
+            /** Name */
+            name?: string | null;
+            /** Score Threshold */
+            score_threshold?: number | null;
+            /** Splitter */
+            splitter?: ("recursive" | "markdown") | null;
+            /** Top K */
+            top_k?: number | null;
         };
         /**
          * LongTermConfigDTO
@@ -1059,6 +1483,23 @@ export interface components {
              * @enum {string}
              */
             write_policy: "off" | "explicit" | "auto";
+        };
+        /**
+         * MaintenanceResultRead
+         * @description 维护端点（`/maintenance` 下的对账与收敛）的返回。
+         */
+        MaintenanceResultRead: {
+            /** Data */
+            data?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Detail
+             * @default
+             */
+            detail: string;
+            /** Ok */
+            ok: boolean;
         };
         /** MemoryConfigDTO */
         MemoryConfigDTO: {
@@ -1414,6 +1855,59 @@ export interface components {
             name?: string | null;
             /** Status */
             status?: ("enabled" | "disabled") | null;
+        };
+        /**
+         * QueryHitRead
+         * @description 一条命中（含 4.6.3 的引用来源串，前端引用卡片直接渲染）。
+         */
+        QueryHitRead: {
+            /** Chunk Id */
+            chunk_id: string;
+            /** Content */
+            content: string;
+            /** Document Id */
+            document_id: string;
+            /** Kb Id */
+            kb_id: string;
+            /** Meta */
+            meta?: {
+                [key: string]: unknown;
+            };
+            /** Score */
+            score: number;
+            /** Source */
+            source: string;
+        };
+        /**
+         * QueryRequest
+         * @description `POST /knowledge-bases/{id}/query`（3.2.5：直接检索，前端调试与评测用）。
+         */
+        QueryRequest: {
+            /** Kb Ids */
+            kb_ids?: string[] | null;
+            /** Query */
+            query: string;
+            /** Score Threshold */
+            score_threshold?: number | null;
+            /** Top K */
+            top_k?: number | null;
+        };
+        /**
+         * QueryResultRead
+         * @description 检索结果（`hit_count == 0` 时 `chunks` 为空数组，不报错 —— 4.6.3 的"未命中"是正常结果）。
+         */
+        QueryResultRead: {
+            /** Chunks */
+            chunks?: components["schemas"]["QueryHitRead"][];
+            /**
+             * Hit Count
+             * @default 0
+             */
+            hit_count: number;
+            /** Kb Ids */
+            kb_ids?: string[];
+            /** Query */
+            query: string;
         };
         /** ReadyzCheck */
         ReadyzCheck: {
@@ -2778,6 +3272,428 @@ export interface operations {
                 content: {
                     "application/json": unknown;
                     "text/event-stream": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_knowledge_bases_api_v1_knowledge_bases_get: {
+        parameters: {
+            query?: {
+                q?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_list_KnowledgeBaseRead__"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_knowledge_base_api_v1_knowledge_bases_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KnowledgeBaseCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_KnowledgeBaseRead_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_knowledge_base_api_v1_knowledge_bases__kb_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                kb_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_KnowledgeBaseRead_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_knowledge_base_api_v1_knowledge_bases__kb_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                kb_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    update_knowledge_base_api_v1_knowledge_bases__kb_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                kb_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KnowledgeBaseUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_KnowledgeBaseRead_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_documents_api_v1_knowledge_bases__kb_id__documents_get: {
+        parameters: {
+            query?: {
+                status?: string | null;
+            };
+            header?: never;
+            path: {
+                kb_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_list_DocumentRead__"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    upload_document_api_v1_knowledge_bases__kb_id__documents_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                kb_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_upload_document_api_v1_knowledge_bases__kb_id__documents_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_DocumentRead_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_document_api_v1_knowledge_bases__kb_id__documents__doc_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                kb_id: string;
+                doc_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_DocumentRead_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_document_api_v1_knowledge_bases__kb_id__documents__doc_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                kb_id: string;
+                doc_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_chunks_api_v1_knowledge_bases__kb_id__documents__doc_id__chunks_get: {
+        parameters: {
+            query?: {
+                offset?: number;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                kb_id: string;
+                doc_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_list_ChunkRead__"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reingest_document_api_v1_knowledge_bases__kb_id__documents__doc_id__reingest_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                kb_id: string;
+                doc_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_DocumentRead_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    query_knowledge_base_api_v1_knowledge_bases__kb_id__query_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                kb_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["QueryRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_QueryResultRead_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    verify_kb_index_api_v1_maintenance_knowledge_bases__kb_id__verify_index_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                kb_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_MaintenanceResultRead_"];
                 };
             };
             /** @description Validation Error */

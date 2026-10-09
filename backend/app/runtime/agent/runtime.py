@@ -116,6 +116,7 @@ class AgentRuntime:
         cancel: asyncio.Event | None = None,
         before_seq: int | None = None,
         retrieved_context: Sequence[str] | None = None,
+        retrieval_notice: str | None = None,
     ) -> RunResult:
         """跑一次 Agent；调用方需先 `tracer.start_run(...)`（4.8.2）。"""
         emitter = emit or NullEmitter()
@@ -139,6 +140,7 @@ class AgentRuntime:
                 user_input=user_input,
                 before_seq=before_seq,
                 retrieved_context=retrieved_context,
+                retrieval_notice=retrieval_notice,
             )
         )
 

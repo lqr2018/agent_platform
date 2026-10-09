@@ -1,7 +1,8 @@
 /**
  * Agent 编辑（详细设计 5.2 的 `/agents/:id`，M1→M3）。
  *
- * Phase 1 的字段：Prompt / 模型 / 步数与超时 / 短期记忆窗口；工具 / KB / Workflow 属后续阶段。
+ * 字段：Prompt / 模型 / 步数与超时 / 短期记忆窗口；Phase 5 起可绑**知识库**
+ * （`knowledge_base_ids`，Chat 首轮 LLM 之前的固定预检索，4.4.2 模式 a）。
  * 改 `system_prompt` 会由后端落 `agent_prompt_versions` 并自增 `prompt_version`（2.4）。
  */
 
@@ -18,6 +19,7 @@ import {
   listPromptVersions,
   updateAgent,
 } from "@/api/agents";
+import { listKnowledgeBases } from "@/api/kb";
 import { listProviders } from "@/api/models";
 
 interface AgentFormValues {
@@ -32,6 +34,8 @@ interface AgentFormValues {
   timeout_seconds: number;
   max_turns: number;
   max_tokens: number;
+  /** Phase 5：绑定后 Chat 在首轮 LLM 之前做固定预检索（4.4.2 模式 a）。 */
+  knowledge_base_ids: string[];
 }
 
 /** 表单 → `AgentUpdate`（`prompt_note` 只在 prompt 变化时才有意义）。 */
@@ -46,6 +50,7 @@ function toUpdatePayload(values: AgentFormValues): AgentUpdate {
     prompt_note: values.prompt_note ?? null,
     max_steps: values.max_steps,
     timeout_seconds: values.timeout_seconds,
+    knowledge_base_ids: values.knowledge_base_ids ?? [],
     memory_config: {
       short_term: {
         strategy: "window",
@@ -66,6 +71,10 @@ export default function AgentEditPage() {
 
   const agent = useQuery({ queryKey: ["agent", id], queryFn: () => getAgent(id), enabled: Boolean(id) });
   const providers = useQuery({ queryKey: ["providers"], queryFn: () => listProviders() });
+  const knowledgeBases = useQuery({
+    queryKey: ["knowledge-bases", ""],
+    queryFn: () => listKnowledgeBases(),
+  });
   const versions = useQuery({
     queryKey: ["prompt-versions", id],
     queryFn: () => listPromptVersions(id),
@@ -89,6 +98,7 @@ export default function AgentEditPage() {
       timeout_seconds: agent.data.timeout_seconds,
       max_turns: shortTerm?.max_turns ?? 12,
       max_tokens: shortTerm?.max_tokens ?? 6000,
+      knowledge_base_ids: agent.data.knowledge_base_ids ?? [],
     });
   }, [agent.data, form]);
 
@@ -187,6 +197,19 @@ export default function AgentEditPage() {
               <InputNumber min={256} max={200000} step={256} />
             </Form.Item>
           </Space>
+
+          <Form.Item
+            name="knowledge_base_ids"
+            label="知识库（绑定后在首轮 LLM 之前固定预检索，4.4.2 模式 a）"
+            extra="留空 = 不做预检索；未绑 KB 的按需检索（kb_search）属迭代 E"
+          >
+            <Select
+              mode="multiple"
+              allowClear
+              placeholder="选择一个或多个知识库"
+              options={(knowledgeBases.data ?? []).map((kb) => ({ value: kb.id, label: kb.name }))}
+            />
+          </Form.Item>
 
           <Button type="primary" htmlType="submit" icon={<SaveOutlined />} loading={saveMutation.isPending}>
             保存

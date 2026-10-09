@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from app.db.models.agent import Agent, AgentPromptVersion
 from app.db.models.conversation import Conversation, Message, Run
+from app.db.models.knowledge import Chunk, Document, KnowledgeBase
 from app.db.models.llm import ModelProvider
 from app.db.models.tool import Tool, ToolInvocation
 from app.db.models.trace import Span, Trace
@@ -17,7 +18,10 @@ from app.db.models.workflow import NodeRun, Workflow, WorkflowRun
 __all__ = [
     "Agent",
     "AgentPromptVersion",
+    "Chunk",
     "Conversation",
+    "Document",
+    "KnowledgeBase",
     "Message",
     "ModelProvider",
     "NodeRun",

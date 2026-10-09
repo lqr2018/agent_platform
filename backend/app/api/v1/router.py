@@ -9,7 +9,18 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from app.api.v1 import agents, chat, conversations, health, model_providers, runs, tools, traces, workflows
+from app.api.v1 import (
+    agents,
+    chat,
+    conversations,
+    health,
+    knowledge_bases,
+    model_providers,
+    runs,
+    tools,
+    traces,
+    workflows,
+)
 
 api_router = APIRouter()
 api_router.include_router(health.meta_router)
@@ -22,5 +33,7 @@ api_router.include_router(runs.workflow_router)
 api_router.include_router(traces.router)
 api_router.include_router(tools.router)
 api_router.include_router(workflows.router)
+api_router.include_router(knowledge_bases.router)
+api_router.include_router(knowledge_bases.maintenance_router)
 
 __all__ = ["api_router"]

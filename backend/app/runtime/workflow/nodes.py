@@ -7,7 +7,7 @@
 | `start` | `workflow_runs.input` | 原样进入 state（引擎初始化时已写入） | — |
 | `agent` | `input_template`（默认 `{{state.input}}`） | `output_key` ← Agent 最终回答 | 默认 `fail` |
 | `tool` | `arguments_template` | `output_key` ← 工具结果 | 默认 `continue` |
-| `retriever` | `query_template` + `kb_id` | `output_key` ← `RetrievedChunk[]` | `continue`（Phase 3 恒失败，见下） |
+| `retriever` | `query_template` + `kb_id` | `output_key` ← 命中切片（带 4.6.3 的 `source`） | 默认 `continue` |
 | `condition` | `branches[].when` | 无（只决定跳转） | 求值异常 → 节点失败 |
 | `end` | — | state 写入 `workflow_runs.output` | — |
 

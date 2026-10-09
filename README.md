@@ -76,7 +76,7 @@ frontend  →  /api/v1 (HTTP + SSE)  →  api
 | Agent Runtime：Provider / Agent CRUD / 流式对话 / Trace | ✅ Phase 1（M1） |
 | Tool Calling：Tool Registry / 权限分级 / 沙箱 | ✅ Phase 2（M2） |
 | Workflow：串行图 / 状态落库 / 断点续跑 | ✅ Phase 3（M2） |
-| RAG：知识库 / 摄取 / 检索 / 引用 | Phase 5（M3） |
+| RAG：知识库 / 摄取 / 检索 / 引用 | ✅ Phase 5（M3）：后端 + 知识库页 + Chat 引用来源卡片 |
 | Trace 与轻量评测（`scripts/evaluate.py`） | Phase 7（M3） |
 | Memory / MCP / 审批后台 / 评测平台 | 设计已就位，**不在第一阶段**（《详细设计》0.5.3 Backlog） |
 
@@ -84,7 +84,7 @@ frontend  →  /api/v1 (HTTP + SSE)  →  api
 
 ## 5. 当前进度
 
-**已完成：Phase 0 项目基础设施 + Phase 1 最小 Agent Runtime + Phase 2 Tool Calling + Phase 3 Workflow**（对齐《详细设计》7.1 / 7.2 / 7.3 / 7.4）
+**已完成：Phase 0 项目基础设施 + Phase 1 最小 Agent Runtime + Phase 2 Tool Calling + Phase 3 Workflow + Phase 5 RAG（后端 + 前端）**（对齐《详细设计》7.1 / 7.2 / 7.3 / 7.4 / 7.6）
 
 Phase 0（基础设施）：
 
@@ -132,9 +132,25 @@ Phase 3（Workflow）：
 - [x] 前端：`/workflows[/:id]`（列表 / JSON 编辑 / 校验面板 / 只读图 / 试跑 + 2s 轮询节点状态 / resume / cancel / 历史运行）
 - [x] `configs/workflows/*.yaml`（8.2 / 8.4 的示例图）+ 装载器与结构校验
 
-**验证情况（Phase 0–3）**：后端 `pytest` **509 项**（506 passed + 3 skipped）、覆盖率 **91%**（`TOTAL 6994 631 91%`）、`ruff check` / `ruff format --check` 0 告警、`mypy app` 通过、`alembic` 往返 + `alembic check`（`No new upgrade operations detected`）、就绪探针 `python -m app.scripts.check_readyz` 通过（`ok=True revision 0004_phase3_workflow_tables`）、`export_openapi` 幂等（连续两次同哈希）；前端 `eslint` / `prettier` / `tsc` / `vitest`（**28 项**）/ `vite build` 全绿。Phase 1/2 的回归用例全绿（无 Workflow 的 Agent 与 Chat 行为不变）；Phase 3 的端到端链路（真实 `create_app()` + lifespan + SQLite：建图 → 发布 → 202 运行 → 轮询 `node-runs` → resume/cancel/内联 Chat 流）见 `tests/integration/test_workflow_runner.py`。说明：`app/services/**` 与 `app/api/**` 的行覆盖率在本机 coverage 下会漏记"`await` 之后的尾行"（《详细设计》7.2 记录的口径），因此服务层另有直测补充（`tests/integration/test_workflow_runner.py` 直接断言落库结果与 `node_runs` 序列）。
+Phase 5（RAG 知识库，**先于 Phase 4 落地**，见《详细设计》附录 F v1.15 / v1.16）：
 
-下一步：**Phase 5 RAG / 知识库**（见《详细设计》7.6，M3）。
+- [x] 迁移 `0005_phase5_knowledge_tables`（`knowledge_bases` / `documents` / `chunks`，含 `kb_id` / `(kb_id, checksum)` 等索引）
+- [x] RAG 运行时（`runtime/rag/**` 七个平铺模块）：`TextLoader` / `MarkdownLoader`、`RecursiveSplitter` / `MarkdownSplitter`、`OpenAICompatibleEmbedder` / `FakeEmbedder`（+ 建 KB 时的维度探测）、`ChromaVectorStore` / `InMemoryVectorStore`、`Retriever`、`IngestPipeline`
+- [x] 摄取流水线（4.6.2 状态机）：`pending → parsing → chunking → embedding → ready|failed`；checksum 幂等（同文件二次上传**不再 embed**）、`reingest`、进程内 `TaskRunner`（停止时排空 / 启动时收敛中间态）
+- [x] API：`/knowledge-bases` 12 端点（CRUD / multipart 上传 / 文档列表与详情 / 切片预览 / `POST /query` / `reingest` / 删除）+ `GET /maintenance/knowledge-bases/{id}/verify-index` 对账
+- [x] Chat 接入（4.4.2 模式 a）：绑定 KB 的 Agent 在**首轮 LLM 之前**做固定预检索 → system 注入 `<chunk id source>` 块 → 发 `retrieval.completed`（事件 10）+ `retriever` span；未命中 / 检索异常只追加"未检索到相关内容"提示，**不打断对话**
+- [x] Workflow 接入（4.5.2）：`retriever` 节点复用同一套检索，命中切片（带 `source`）写进 `output_key`；`kb_id` 不存在 → `KB_NOT_FOUND`，按节点 `on_error=continue` 记错误码后继续
+- [x] `/readyz` 的 `vector_store` 检查改为真实探测（chroma `heartbeat()` / memory 恒 ok）
+- [x] 文档：`docs/diagrams/phase-5-rag.md`（附录 F 规则 3）+ 1.1.1 落点更新
+- [x] **前端**：`api/kb.ts`（12 端点 + `verify-index` 对账）+ `/knowledge` 知识库页（列表 / 新建与编辑 / 上传 multipart / 文档表 2s 进度轮询 / 切片预览弹窗 / 检索试算多 KB）+ Chat 引用来源卡片（`components/chat/CitationCard.tsx` 消费事件 10）+ Agent 编辑页的 `knowledge_base_ids` 绑定入口
+
+**验证情况（Phase 5 后端）**：`pytest` 全量通过（unit + 19 个 integration 文件）、`ruff check` / `ruff format --check` / `mypy app` 0 告警、`alembic check` 干净（head = `0005_phase5_knowledge_tables`）、`python -m app.scripts.check_readyz` 通过、`export_openapi` 幂等（`frontend/src/types/api.d.ts` 已随之重导）。知识库端到端在 `tests/integration/test_knowledge_api.py`：上传 → `ready` → 命中（带 `source`）→ 删除后不再命中、同 checksum 不重复 embed（断言 embedding 调用次数）、`verify-index` 两端计数一致、Chat 预检索的事件 10 与 `<chunk>` 注入（含未命中与未绑 KB 两个分支）、Workflow `retriever` 节点的命中与 `KB_NOT_FOUND` 分支。
+
+**验证情况（Phase 5 前端）**：`npm run lint`（eslint 0 告警）/ `prettier --check` / `tsc --noEmit` / `vitest`（**47 项**，10 个文件）/ `vite build`（3077 modules，`dist/assets/index-*.js` 1.35 MB，gzip 424 kB）全绿。新增用例：`src/api/__tests__/kb.test.ts`（12 个端点的 URL / 方法 / body，特别钉住 multipart **不手写** `Content-Type`、`/query` 的多库 `kb_ids`、`verify-index` 走 `/maintenance`）、`src/components/chat/CitationCard.test.tsx`（未命中 / 明细在拉 / 明细已到 / 拉取失败四态）、`src/pages/__tests__/KnowledgePage.test.tsx`（列表口径与空态）、`src/stores/chatStore.test.ts` 的事件 10 三条（骨架与补拉、未命中即终结、无检索轮次不清空）。前端落点见《详细设计》附录 F v1.18（含"事件 10 只带计数、切片正文按需补拉"的口径）。
+
+**验证情况（Phase 0–3，基线）**：后端 `pytest` **509 项**（506 passed + 3 skipped）、覆盖率 **91%**（`TOTAL 6994 631 91%`）、`ruff check` / `ruff format --check` 0 告警、`mypy app` 通过、`alembic` 往返 + `alembic check`（`No new upgrade operations detected`）、就绪探针 `python -m app.scripts.check_readyz` 通过（`ok=True revision 0004_phase3_workflow_tables`）、`export_openapi` 幂等（连续两次同哈希）；前端 `eslint` / `prettier` / `tsc` / `vitest`（**28 项**）/ `vite build` 全绿。Phase 1/2 的回归用例全绿（无 Workflow 的 Agent 与 Chat 行为不变）；Phase 3 的端到端链路（真实 `create_app()` + lifespan + SQLite：建图 → 发布 → 202 运行 → 轮询 `node-runs` → resume/cancel/内联 Chat 流）见 `tests/integration/test_workflow_runner.py`。说明：`app/services/**` 与 `app/api/**` 的行覆盖率在本机 coverage 下会漏记"`await` 之后的尾行"（《详细设计》7.2 记录的口径），因此服务层另有直测补充（`tests/integration/test_workflow_runner.py` 直接断言落库结果与 `node_runs` 序列）。
+
+下一步：**M3 的收口**（Trace 详情树 / 指标看板 / 评测脚本与报告，见《详细设计》7.8 / 7.9），随后是迭代 E（`kb_search` 工具、`PdfLoader` / `WebLoader` / `Reranker`、`runtime/rag` 拆子包，见 4.4.2 / 4.6.1）。
 
 ---
 
@@ -183,12 +199,12 @@ cd ..\frontend; npm run gen:api
 
 - 单进程 + SQLite，无多实例/横向扩展；不引入 Redis / Celery / PostgreSQL / 向量库集群（SD-8 / SD-9 / SD-11）。
 - 无鉴权（`owner_key` 固定 `local`，SD-3）；请勿直接暴露到公网。
-- Agent 可带工具与 Workflow：`tool_ids` 必须指向**存在且 `enabled`** 的工具；`workflow_id` 必须指向**已发布**的 Workflow（否则 `AGENT_INVALID_CONFIG`）；`knowledge_base_ids` 仍必须为空（Phase 5，SD-14②）。
+- Agent 可带工具、Workflow 与知识库：`tool_ids` 必须指向**存在且 `enabled`** 的工具；`workflow_id` 必须指向**已发布**的 Workflow；`knowledge_base_ids` 必须指向**未删除且可检索**的知识库（任一不满足 → `AGENT_INVALID_CONFIG`）。
 - 工具执行是**顺序**的（SD-2，同一 step 内逐个调用）；同一工具连续失败 3 次才终止 Run（`TOOL_REPEATED_FAILURE`）。
 - 同一会话同时只允许一个活跃 Run（第二个请求 409）；客户端断开**默认不取消** Run（`DETACH_CANCEL=true` 才取消，SD/3.4）。
 - Prompt 历史只做"变更留档 + 只读列表"，**回滚端点**（`prompt-versions/{version}/activate`）属延后项（《详细设计》7.0.1）。
 - Workflow 不支持并行分支（SD-1）；节点**串行**执行；`human` 节点与审批属 Backlog（SD-17）。
-- Phase 3 的 Workflow 里 `retriever` 节点会明确回 `NOT_IMPLEMENTED`（知识库属 Phase 5）：节点默认 `on_error=continue`，错误文本会写进它的 `output_key` 并继续后续节点；`configs/workflows/*.yaml` 的示例图（`research-flow.yaml` / `kb-qa-flow.yaml`）因此在 Phase 5 之前只能跑到"检索失败"分支。
+- Workflow 的 `retriever` 节点自 Phase 5 起接真实检索（4.5.2 复用 `kb_service.retrieve`）：`kb_id` 必须是**已存在的知识库 id**（示例图里的 `kb_id: product-docs` 是占位，写库时由 Phase 8 的 `seed_demo` 解析成真实 id）；在那之前跑示例图会在该节点得到 `KB_NOT_FOUND` —— 节点默认 `on_error=continue`，错误文本写进 `output_key` 后继续后续节点，图的形状不变。
 - Workflow 运行**不返回 SSE**（3.4）：`POST /workflows/{id}/runs` 返回 202，页面按 2s 轮询 `node-runs`；SSE 只在 Chat 内联场景（`agent.workflow_id` 非空）里出现。
 - `python_execute` / `file_write` 默认关闭，需在 `Settings` 显式开启（SD-17）。
 - Memory / MCP / 审批后台 / 评测平台为 Backlog：设计保留在文档中，但**不提供接口、不建空页面**（SD-14②）。

@@ -72,6 +72,13 @@ class ErrorCode(StrEnum):
     RUN_ABANDONED = "RUN_ABANDONED"
     """6.3 第 3 条：进程重启后收敛的孤儿 Run / WorkflowRun（附录 A 的阶段列为 3）。"""
 
+    # ---- 知识库 / RAG（2.8 / 4.6，Phase 5） ----
+    KB_NOT_FOUND = "KB_NOT_FOUND"
+    KB_DOCUMENT_NOT_FOUND = "KB_DOCUMENT_NOT_FOUND"
+    KB_UNSUPPORTED_FORMAT = "KB_UNSUPPORTED_FORMAT"
+    KB_INGEST_FAILED = "KB_INGEST_FAILED"
+    KB_EMPTY_INDEX = "KB_EMPTY_INDEX"
+
 
 class AppError(Exception):
     """所有可预期错误的基类（1.6）。
@@ -425,6 +432,43 @@ class WorkflowNodeError(AppError):
     ) -> None:
         self.code = code
         super().__init__(message, details=details)
+
+
+# ---- Phase 5：知识库 / RAG（2.8 / 4.6） ----
+class KnowledgeBaseNotFoundError(NotFoundError):
+    """知识库不存在或已软删除（404，附录 A）。"""
+
+    code = ErrorCode.KB_NOT_FOUND
+    message = "Knowledge base not found"
+
+
+class KnowledgeBaseDocumentNotFoundError(NotFoundError):
+    """文档不存在（404，附录 A）。"""
+
+    code = ErrorCode.KB_DOCUMENT_NOT_FOUND
+    message = "Document not found"
+
+
+class KnowledgeBaseUnsupportedFormatError(ValidationError):
+    """不支持的 MIME / 后缀（422，附录 A）；`documents.error_code` 也用它。"""
+
+    code = ErrorCode.KB_UNSUPPORTED_FORMAT
+    message = "Unsupported document format"
+
+
+class KnowledgeBaseIngestFailedError(AppError):
+    """摄取失败（500，附录 A）：`details.stage` 标明 `parsing` / `chunking` / `embedding`。"""
+
+    code = ErrorCode.KB_INGEST_FAILED
+    http_status = 500
+    message = "Document ingestion failed"
+
+
+class KnowledgeBaseEmptyIndexError(ConflictError):
+    """集合无向量（409，附录 A）：向量库与 DB 不一致或还没摄取完（4.5.4 的可重试类）。"""
+
+    code = ErrorCode.KB_EMPTY_INDEX
+    message = "Knowledge base has no indexed chunks"
 
 
 HTTP_STATUS_TO_CODE: Mapping[int, ErrorCode] = {

@@ -11,7 +11,7 @@ import copy
 from typing import Any
 
 from app.core.enums import RunStatus
-from app.core.errors import ErrorCode, FeatureNotImplementedError, ToolTimeoutError
+from app.core.errors import ErrorCode, KnowledgeBaseNotFoundError, ToolTimeoutError
 from app.runtime.workflow import SimpleEngine
 from tests.unit.workflow.stubs import StubRunner, canonical_definition, run_engine
 
@@ -87,19 +87,23 @@ async def test_retry_exhausted_fails_the_run() -> None:
 
 
 async def test_retriever_node_default_continue() -> None:
-    """`retriever` 默认 `continue`（4.5.2）；Phase 3 的服务层会注入"KB 未实现"的错误。"""
+    """`retriever` 默认 `continue`（4.5.2）：节点失败但 Run 继续，错误文本写进 `output_key`。
+
+    用**真实错误类型**（Phase 5 起 `kb_service` 抛的是 `KB_NOT_FOUND`）；真实服务层的端到端见
+    `tests/integration/test_knowledge_api.py::test_workflow_retriever_missing_knowledge_base_continues`。
+    """
     definition = canonical_definition()
     definition["nodes"] = [
         *copy.deepcopy(definition["nodes"]),
         {"id": "reader", "type": "retriever", "kb_id": "kb-1", "output_key": "chunks", "next": "end"},
     ]
     next(node for node in definition["nodes"] if node["id"] == "writer")["next"] = "reader"
-    runner = StubRunner(fail_plan={"reader": [FeatureNotImplementedError("knowledge bases arrive in Phase 5")]})
+    runner = StubRunner(fail_plan={"reader": [KnowledgeBaseNotFoundError("Knowledge base 'kb-1' was not found")]})
     harness = await run_engine(SimpleEngine, definition=definition, runner=runner)
 
     assert harness.result.status is RunStatus.SUCCEEDED
     assert harness.sink.rows_of("reader")[0].status is RunStatus.FAILED
-    assert "Phase 5" in str(harness.result.state["chunks"])
+    assert "KB_NOT_FOUND" in str(harness.result.state["chunks"])
 
 
 async def test_max_steps_limit() -> None:

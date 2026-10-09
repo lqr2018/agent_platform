@@ -44,7 +44,8 @@ render_inputs(node)                   → node_runs.input（模板静态检查�
 emit(workflow.node.started)
 execute_node(node, inputs)
    ├─ start      → 原样（state 已含初始 input）            ├─ condition → branches[].when 首个为真 / default_next
-   ├─ agent      → runner.run_agent_node（AgentRuntime）   └─ retriever → Phase 3 明确 NOT_IMPLEMENTED
+   ├─ agent      → runner.run_agent_node（AgentRuntime）   └─ retriever → runner.run_retriever_node
+   │                                                                     （kb_service.retrieve，Phase 5 起）
    ├─ tool       → runner.run_tool_node（ToolExecutor 九步）
    └─ end        → 写 workflow_runs.output
 成功 → node_runs(succeeded) + state 更新 + emit(completed)

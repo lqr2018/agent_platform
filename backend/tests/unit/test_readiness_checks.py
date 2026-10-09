@@ -47,21 +47,22 @@ def test_features_schema_is_stable() -> None:
     }
 
 
-def test_vector_store_check_for_memory_kind() -> None:
-    check = _check_vector_store(Settings(_env_file=None, vector_store_kind="memory"))
+async def test_vector_store_check_for_memory_kind() -> None:
+    check = await _check_vector_store(Settings(_env_file=None, vector_store_kind="memory"))
     assert check.ok is True
     assert check.detail == "memory (in-process)"
 
 
-def test_vector_store_check_for_missing_chroma_dir(tmp_path: Path) -> None:
-    check = _check_vector_store(Settings(_env_file=None, chroma_dir=(tmp_path / "nope").as_posix()))
+async def test_vector_store_check_for_missing_chroma_dir(tmp_path: Path) -> None:
+    check = await _check_vector_store(Settings(_env_file=None, chroma_dir=(tmp_path / "nope").as_posix()))
     assert check.ok is False
     assert "directory missing" in check.detail
 
 
-def test_vector_store_check_for_writable_chroma_dir(tmp_path: Path) -> None:
+async def test_vector_store_check_for_writable_chroma_dir(tmp_path: Path) -> None:
+    """Phase 5 起 `chroma` 是**真实探测**（`PersistentClient.heartbeat()`），不再只是"目录可写"。"""
     chroma = tmp_path / "chroma"
     chroma.mkdir()
-    check = _check_vector_store(Settings(_env_file=None, chroma_dir=chroma.as_posix()))
+    check = await _check_vector_store(Settings(_env_file=None, chroma_dir=chroma.as_posix()))
     assert check.ok is True
-    assert check.detail.startswith("writable:")
+    assert check.detail.startswith("chroma ok:")

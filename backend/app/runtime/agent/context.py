@@ -28,13 +28,17 @@ async def assemble_context(
     user_input: str,
     before_seq: int | None = None,
     retrieved_context: Sequence[str] | None = None,
+    retrieval_notice: str | None = None,
 ) -> list[ChatMessage]:
     """按 4.4.2 的顺序装配发给 LLM 的上下文。
 
     `before_seq` 用于排除"本轮刚落库的 user 消息"（文档 4.3.1 的签名细化），
-    避免同一条 user 消息出现两次。
+    避免同一条 user 消息出现两次；`retrieved_context` / `retrieval_notice` 是 Phase 5 的
+    检索块与"未检索到相关内容"提示（4.4.2 第 1 步、4.6.3）。
     """
-    messages: list[ChatMessage] = [build_system_message(agent, retrieved_context=retrieved_context)]
+    messages: list[ChatMessage] = [
+        build_system_message(agent, retrieved_context=retrieved_context, retrieval_notice=retrieval_notice)
+    ]
     if conversation_id:
         history = await memory.build(conversation_id, agent=agent, before_seq=before_seq)
         messages.extend(history)

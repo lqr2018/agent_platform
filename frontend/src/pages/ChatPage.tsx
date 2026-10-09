@@ -30,10 +30,12 @@ import {
   listConversations,
   listMessages,
 } from "@/api/conversations";
+import { queryKnowledgeBase } from "@/api/kb";
+import CitationCard from "@/components/chat/CitationCard";
 import MessageBubble from "@/components/chat/MessageBubble";
 import ToolCallCard from "@/components/chat/ToolCallCard";
 import { useChatStream } from "@/hooks/useChatStream";
-import { type RunState, useChatStore } from "@/stores/chatStore";
+import { type CitationChunk, type RunState, useChatStore } from "@/stores/chatStore";
 
 export default function ChatPage() {
   const { id } = useParams();
@@ -80,9 +82,51 @@ export default function ChatPage() {
   const streaming = useChatStore((state) => state.streaming);
   const run = useChatStore((state) => state.run);
   const toolTimeline = useChatStore((state) => state.tools);
+  const citations = useChatStore((state) => state.citations);
+  const setCitationChunks = useChatStore((state) => state.setCitationChunks);
 
   /** 接口返回倒序（最新在前），展示时反转成正序。 */
   const orderedMessages = useMemo(() => [...(messages.data?.data ?? [])].reverse(), [messages.data]);
+
+  /**
+   * 引用明细按需补拉：事件 10 只带 `kb_ids` / `query` / `hit_count`（3.4 三字段契约），
+   * 切片正文用**同一个 query** 走 `POST /knowledge-bases/{id}/query`（带 `kb_ids` 多库）——
+   * 与知识库页的"检索试算"同一端点、同一条 `Retriever`，因此 `source` 逐字一致（4.6.3）。
+   * 补拉失败只让卡片退化为"命中数 + 提示"，**不影响本轮回答**。
+   */
+  useEffect(() => {
+    if (!citations || citations.chunks !== null || citations.kbIds.length === 0) {
+      return;
+    }
+    let canceled = false;
+    void queryKnowledgeBase(citations.kbIds[0] ?? "", {
+      query: citations.query,
+      kb_ids: citations.kbIds,
+    })
+      .then((result) => {
+        if (canceled) {
+          return;
+        }
+        setCitationChunks(
+          (result.chunks ?? []).map((hit): CitationChunk => ({
+            chunkId: hit.chunk_id,
+            documentId: hit.document_id,
+            kbId: hit.kb_id,
+            score: hit.score,
+            source: hit.source,
+            content: hit.content,
+          })),
+        );
+      })
+      .catch(() => {
+        if (!canceled) {
+          setCitationChunks([]);
+        }
+      });
+    return () => {
+      canceled = true;
+    };
+  }, [citations, setCitationChunks]);
 
   const send = async () => {
     const content = draft.trim();
@@ -147,6 +191,8 @@ export default function ChatPage() {
             </Space>
           )}
         </Card>
+
+        {citations ? <CitationCard retrieval={citations} /> : null}
 
         {toolTimeline.length > 0 ? (
           <Card size="small" title={`工具调用（${toolTimeline.length}）`} styles={{ body: { padding: 12 } }}>

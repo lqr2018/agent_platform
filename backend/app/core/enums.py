@@ -90,6 +90,18 @@ class NodeType(StrEnum):
     END = "end"
 
 
+class KnowledgeBaseStatus(StrEnum):
+    """知识库状态（2.8 的 `knowledge_bases.status`）。
+
+    `ingesting` 表示该 KB 下还有文档未收敛（`pending` → `ready/failed` 之间），
+    页面据此显示"摄取中"；`error` 表示最近一次摄取失败且 KB 内无可用切片。
+    """
+
+    READY = "ready"
+    INGESTING = "ingesting"
+    ERROR = "error"
+
+
 class DocumentStatus(StrEnum):
     """文档摄取状态机（4.6.2）。"""
 

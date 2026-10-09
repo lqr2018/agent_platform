@@ -88,6 +88,57 @@ describe("chatStore", () => {
     expect(state.tools[0]).toMatchObject({ toolName: "calculator", status: "succeeded", latencyMs: 3 });
   });
 
+  it("retrieval.completed 记录检索骨架，命中时先占位，明细由页面补拉（Phase 5）", () => {
+    apply([
+      ["run.started", { run_id: "r5", trace_id: "t5" }],
+      ["retrieval.completed", { kb_ids: ["kb_1", "kb_2"], query: "怎么安装", hit_count: 2 }],
+    ]);
+
+    let state = useChatStore.getState();
+    expect(state.citations).toEqual({
+      kbIds: ["kb_1", "kb_2"],
+      query: "怎么安装",
+      hitCount: 2,
+      chunks: null,
+    });
+
+    useChatStore.getState().setCitationChunks([
+      {
+        chunkId: "c1",
+        documentId: "d1",
+        kbId: "kb_1",
+        score: 0.83,
+        source: "install.md#安装 score=0.83",
+        content: "先安装依赖",
+      },
+    ]);
+    state = useChatStore.getState();
+    expect(state.citations?.chunks).toHaveLength(1);
+    expect(state.citations?.chunks?.[0]?.source).toBe("install.md#安装 score=0.83");
+  });
+
+  it("未命中（hit_count = 0）直接落成空明细；新一轮 run.started 清空上一轮引用", () => {
+    apply([["retrieval.completed", { kb_ids: ["kb_1"], query: "无关问题", hit_count: 0 }]]);
+    expect(useChatStore.getState().citations).toEqual({
+      kbIds: ["kb_1"],
+      query: "无关问题",
+      hitCount: 0,
+      chunks: [],
+    });
+
+    apply([["run.started", { run_id: "r6", trace_id: "t6" }]]);
+    expect(useChatStore.getState().citations).toBeNull();
+  });
+
+  it("没触发检索的轮次不渲染引用卡片（citations 保持 null）", () => {
+    apply([
+      ["run.started", { run_id: "r7", trace_id: "t7" }],
+      ["run.completed", { run_id: "r7", status: "succeeded", steps: 1, tool_call_count: 0, latency_ms: 5 }],
+    ]);
+
+    expect(useChatStore.getState().citations).toBeNull();
+  });
+
   it("reset 清空状态", () => {
     apply([["message.started", { message_id: "m9", role: "assistant", model: "m" }]]);
     useChatStore.getState().reset();

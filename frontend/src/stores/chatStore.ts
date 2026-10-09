@@ -41,6 +41,30 @@ export interface RunState {
   errorMessage: string | null;
 }
 
+/** 引用来源卡片的一项（`POST /knowledge-bases/{id}/query` 的 `QueryHitRead`，3.2.5 / 4.6.3）。 */
+export interface CitationChunk {
+  chunkId: string;
+  documentId: string;
+  kbId: string;
+  score: number;
+  source: string;
+  content: string;
+}
+
+/**
+ * 本轮 Run 的检索态（事件 10 `retrieval.completed`，Phase 5）。
+ *
+ * 事件本身只带 `kb_ids` / `query` / `hit_count`（3.4 的三字段契约），**不含切片正文**；
+ * 明细由页面在收到事件后用**同一个 query**调 `POST /knowledge-bases/{kb_ids[0]}/query`
+ * （带 `kb_ids` 多库）补拉 —— `chunks === null` 表示"还没拉回来"，`[]` 表示"确实没命中"。
+ */
+export interface RetrievalState {
+  kbIds: string[];
+  query: string;
+  hitCount: number;
+  chunks: CitationChunk[] | null;
+}
+
 const IDLE_RUN: RunState = {
   runId: null,
   traceId: null,
@@ -57,9 +81,13 @@ interface ChatStoreState {
   streaming: StreamingMessage | null;
   tools: ToolCallTimelineItem[];
   run: RunState;
+  /** 本轮 Run 的检索态（Phase 5，事件 10；`null` = 这一轮没触发检索）。 */
+  citations: RetrievalState | null;
   appliedEvents: number;
   /** 把服务端事件应用到本地状态（`useChatStream` 负责解析，store 只做归纳）。 */
   applyEvent: (event: SseEventType, data: Record<string, unknown>) => void;
+  /** 补拉回来的引用明细（事件 10 不含正文，见 `RetrievalState`）。 */
+  setCitationChunks: (chunks: CitationChunk[]) => void;
   reset: () => void;
 }
 
@@ -75,6 +103,7 @@ export const useChatStore = create<ChatStoreState>((set) => ({
   streaming: null,
   tools: [],
   run: IDLE_RUN,
+  citations: null,
   appliedEvents: 0,
 
   applyEvent: (event, data) =>
@@ -86,6 +115,7 @@ export const useChatStore = create<ChatStoreState>((set) => ({
             ...next,
             streaming: null,
             tools: [],
+            citations: null,
             run: {
               ...IDLE_RUN,
               runId: str(data["run_id"]) || null,
@@ -161,6 +191,21 @@ export const useChatStore = create<ChatStoreState>((set) => ({
                 : item,
             ),
           };
+        case "retrieval.completed": {
+          const hitCount = num(data["hit_count"]);
+          return {
+            ...next,
+            citations: {
+              kbIds: Array.isArray(data["kb_ids"])
+                ? data["kb_ids"].filter((item): item is string => typeof item === "string")
+                : [],
+              query: str(data["query"]),
+              hitCount,
+              // 事件只带计数（3.4 三字段契约）：命中时先占位，正文由页面用同一 query 补拉。
+              chunks: hitCount === 0 ? [] : null,
+            },
+          };
+        }
         case "usage.updated":
           return {
             ...next,
@@ -200,5 +245,8 @@ export const useChatStore = create<ChatStoreState>((set) => ({
       }
     }),
 
-  reset: () => set({ streaming: null, tools: [], run: IDLE_RUN, appliedEvents: 0 }),
+  setCitationChunks: (chunks) =>
+    set((state) => (state.citations ? { ...state, citations: { ...state.citations, chunks } } : state)),
+
+  reset: () => set({ streaming: null, tools: [], citations: null, run: IDLE_RUN, appliedEvents: 0 }),
 }));

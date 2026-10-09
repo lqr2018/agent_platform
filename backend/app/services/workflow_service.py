@@ -8,8 +8,8 @@
 3. **落库**：`DatabaseWorkflowRunSink` 实现 `WorkflowRunSink`（4.5.3 的 `node_runs` /
    `state` / `checkpoint` 每条一次写入）；
 4. **节点 IO**：`ServiceNodeRunner` 实现 `WorkflowNodeRunner` —— `agent` 节点复用
-   `AgentRuntime.run()`（4.4.4），`tool` 节点复用九步流水线，`retriever` 节点在 Phase 3
-   明确回 `NOT_IMPLEMENTED`（KB 属 Phase 5，SD-14②：不做假的可用性）；
+   `AgentRuntime.run()`（4.4.4），`tool` 节点复用九步流水线，`retriever` 节点复用
+   `kb_service.retrieve()`（4.5.2 / 4.6.3，Phase 5 接入）；
 5. **收敛**：`converge_orphan_runs` 给 6.3 第 3 条（进程重启后的孤儿 Run）用。
 
 **不返回 SSE**（3.4）：`POST /workflows/{id}/runs` 返回 202，前端轮询
@@ -36,7 +36,6 @@ from app.core.errors import (
     AppError,
     ConflictError,
     ErrorCode,
-    FeatureNotImplementedError,
     InternalError,
     RunAlreadyFinishedError,
     RunCanceledError,
@@ -47,7 +46,14 @@ from app.core.errors import (
     WorkflowRunNotFoundError,
     WorkflowRunNotResumableError,
 )
-from app.core.events import RunCompletedPayload, RunFailedPayload, RunStartedPayload, SseEventType, SseQueueItem
+from app.core.events import (
+    RetrievalCompletedPayload,
+    RunCompletedPayload,
+    RunFailedPayload,
+    RunStartedPayload,
+    SseEventType,
+    SseQueueItem,
+)
 from app.core.logging import get_logger
 from app.db.models import Agent, NodeRun, Run, Tool, Workflow, WorkflowRun
 from app.db.models.agent import AGENT_STATUS_ENABLED
@@ -82,6 +88,7 @@ from app.schemas.workflow import WorkflowCreate, WorkflowUpdate
 from app.services import (
     agent_service,
     conversation_service,
+    kb_service,
     model_provider_service,
     run_service,
     tool_service,
@@ -897,15 +904,41 @@ class ServiceNodeRunner:
         )
 
     async def run_retriever_node(self, node: WorkflowNode, query: str, ctx: NodeExecutionContext) -> NodeOutcome:
-        """Phase 3 的 `retriever` 节点：**明确**回 `NOT_IMPLEMENTED`（KB 属 Phase 5）。"""
-        raise FeatureNotImplementedError(
-            "retriever nodes require knowledge bases (Phase 5)",
-            details={
-                "node_id": node.id,
-                "kb_id": node.str_field("kb_id"),
-                "query": query,
-                "phase": 5,
-                "reason": "RETRIEVER_NOT_AVAILABLE",
+        """`retriever` 节点：`kb_id` → `kb_service.retrieve()`（4.5.2 / 4.6.3，Phase 5 接入）。
+
+        - 命中切片以 **JSON 形态**写进 `output_key`（`{{state.<key>}}` 可直接渲染、`len()` 可判空），
+          每片带 `source`（4.6.3 的引用串 `install.md#2.1 page=2 score=0.83`）供下游 `agent` 节点引用；
+        - 空查询 / 空索引 → `hit_count=0`，**不算节点失败**：要不要答、怎么答交给图的
+          `condition` 分支（`configs/workflows/kb-qa-flow.yaml` 的"未命中必须说不编造"就是这条）；
+        - KB 不存在 / 已软删 → `kb_service` 的 `KB_NOT_FOUND` 冒泡，引擎记 `node_runs.error_code`
+          后按节点 `on_error` 处理（`retriever` 默认 `continue`，4.5.2）；
+        - 命中后发事件 10（3.4）：Chat 内联场景前端据此渲染引用来源；手动运行注入的是
+          `NullEmitter`，无副作用。
+        """
+        kb_id = node.str_field("kb_id")
+        chunks, used_kb_ids = await kb_service.retrieve(self._session, [kb_id], query, settings=self._settings)
+        payload = [
+            {
+                "chunk_id": chunk.chunk_id,
+                "document_id": chunk.document_id,
+                "kb_id": chunk.kb_id,
+                "score": round(chunk.score, 6),
+                "content": chunk.content,
+                "source": chunk.citation_source(),
+            }
+            for chunk in chunks
+        ]
+        await ctx.emitter.emit(
+            SseEventType.RETRIEVAL_COMPLETED,
+            RetrievalCompletedPayload(kb_ids=used_kb_ids, query=query, hit_count=len(payload)),
+        )
+        return NodeOutcome(
+            state_updates={"output": payload},
+            output_summary={
+                "kb_id": kb_id,
+                "used_kb_ids": used_kb_ids,
+                "hit_count": len(payload),
+                "sources": [str(item["source"]) for item in payload],
             },
         )
 

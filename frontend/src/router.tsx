@@ -5,6 +5,7 @@ import AgentEditPage from "@/pages/AgentEditPage";
 import AgentsPage from "@/pages/AgentsPage";
 import ChatPage from "@/pages/ChatPage";
 import DashboardPage from "@/pages/DashboardPage";
+import KnowledgePage from "@/pages/KnowledgePage";
 import ModelsPage from "@/pages/ModelsPage";
 import NotFoundPage from "@/pages/NotFoundPage";
 import ToolsPage from "@/pages/ToolsPage";
@@ -35,6 +36,7 @@ export const router = createBrowserRouter([
       { path: "workflows/:id", element: <WorkflowEditPage /> },
       { path: "chat", element: <ChatPage /> },
       { path: "chat/:id", element: <ChatPage /> },
+      { path: "knowledge", element: <KnowledgePage /> },
       { path: "traces", element: <TracesPage /> },
       { path: "traces/:traceId", element: <TraceDetailPage /> },
       { path: "*", element: <NotFoundPage /> },

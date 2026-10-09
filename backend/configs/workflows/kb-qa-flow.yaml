@@ -3,13 +3,14 @@
 # 图：start → retrieve(retriever) → router(condition) → answer(agent) → end
 #                              └─ 未命中 → fallback(agent) → end
 #
-# 说明（Phase 3 现状）：
+# 说明（Phase 5 现状）：
 #
-# - `retriever` 节点需要知识库（**Phase 5**），Phase 3 运行时会明确回 `NOT_IMPLEMENTED`
-#   （节点 `on_error=continue` → 错误文本进 state，`router` 因此走"未命中"分支）；
-# - Phase 5 到位后本图无需改动即可给出带引用的回答（8.4 的"未命中必须说不编造"由
-#   `fallback` 分支保证）；
-# - `kb_id` / `agent_id` 是占位，写库时由 `seed_demo` 解析（8.1）。
+# - `retriever` 节点已接真实检索（4.5.2 复用 `kb_service.retrieve`）：命中切片（带 4.6.3 的
+#   `source`）写进 `chunks`；未命中 / 空索引写**空数组**，`router` 因此走"未命中"分支
+#   （8.4 的"未命中必须说不编造"由 `fallback` 分支保证）；
+# - `kb_id` 必须是**已存在的知识库 id**（`GET /api/v1/knowledge-bases` 返回的 `id`）：查不到会得到
+#   `KB_NOT_FOUND`，节点 `on_error=continue` 把错误文本写进 `chunks` 后继续后续节点；
+# - `kb_id` / `agent_id` 是占位：写库时由 `seed_demo` 解析成真实 id（8.1）。
 version: 1
 workflow:
   name: kb-qa-flow

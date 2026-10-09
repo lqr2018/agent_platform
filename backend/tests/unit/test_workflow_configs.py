@@ -35,7 +35,7 @@ def test_shipped_configs_load_and_validate() -> None:
 
 
 def test_shipped_configs_only_use_supported_node_types() -> None:
-    """SD-17：示例图里不出现 `human`（Backlog）；`retriever` 允许出现但标注 Phase 5。"""
+    """SD-17：示例图里不出现 `human`（Backlog）；`retriever` 自 Phase 5 起是真实能力（4.5.2）。"""
     from app.core.enums import NodeType
 
     allowed = {str(item) for item in NodeType}

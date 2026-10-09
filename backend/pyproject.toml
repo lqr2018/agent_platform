@@ -23,6 +23,10 @@ dependencies = [
     "httpx>=0.27",
     # Phase 3：`configs/workflows/*.yaml` 的装载（7.4 交付物 / 8.1）；Phase 8 的 `seed_demo` 复用
     "pyyaml>=6.0",
+    # Phase 5：`POST /knowledge-bases/{id}/documents` 的 multipart 上传需要它（FastAPI 的 UploadFile）
+    "python-multipart>=0.0.9",
+    # Phase 5：`runtime/rag/vectorstores.py` 的唯一生产向量库（SD-11；版本基线见 0.2.3 的「Chroma 0.5+」）
+    "chromadb>=0.5",
 ]
 
 [project.optional-dependencies]

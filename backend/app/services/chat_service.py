@@ -20,9 +20,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import ids
 from app.core.config import Settings
-from app.core.enums import MessageRole, RunKind, RunStatus, SpanStatus
+from app.core.enums import MessageRole, RunKind, RunStatus, SpanStatus, SpanType
 from app.core.errors import AgentDisabledError, AppError
 from app.core.events import (
+    RetrievalCompletedPayload,
     RunCompletedPayload,
     RunFailedPayload,
     RunStartedPayload,
@@ -41,9 +42,11 @@ from app.runtime.agent.state import AgentSpec, RunResult
 from app.runtime.llm.base import ProviderConfig
 from app.runtime.llm.registry import LLMRegistry
 from app.runtime.observability.tracer import Tracer
+from app.runtime.rag import EMPTY_RETRIEVAL_NOTICE, build_context_blocks
 from app.services import (
     agent_service,
     conversation_service,
+    kb_service,
     model_provider_service,
     run_service,
     tool_service,
@@ -225,6 +228,55 @@ async def _start_inline_workflow(
     )
 
 
+async def _retrieve_context(
+    session: AsyncSession,
+    settings: Settings,
+    *,
+    agent_spec: AgentSpec,
+    user_input: str,
+    emitter: EventEmitter,
+    tracer: Tracer,
+) -> tuple[list[str] | None, str | None]:
+    """4.4.2 第 1 步 / 4.6.3：Agent 绑定 KB 时的**固定预检索**。
+
+    返回 `(注入块, 未命中提示)`，两者互斥：
+
+    - 命中 → 4.4.2 的 `<chunk id source>` 块（`source` 里带 4.6.3 的文件名 / 标题 / 分数）；
+    - 未命中或检索不可用 → 4.6.3 的"未检索到相关内容"提示（**不注入空段落**，避免模型编造）。
+
+    检索失败**不打断对话**（知识库是增强而非依赖）：只记日志 + 事件 10 报 `hit_count=0`。
+    另外每个 Run 只做一次（在第一次 LLM 调用之前），与 4.4.2 的"仅一次"约定一致；
+    另外一条路径（未绑定 KB 时由 `kb_search` 工具按需检索）属迭代 E。
+    """
+    kb_ids = list(agent_spec.knowledge_base_ids)
+    if not kb_ids:
+        return None, None
+    try:
+        async with tracer.span(
+            SpanType.RETRIEVER,
+            f"retriever:{','.join(kb_ids)}",
+            attributes={"kb_ids": kb_ids, "strategy": "prefetch"},
+            input={"query": user_input},
+        ) as span:
+            chunks, used_kb_ids = await kb_service.retrieve(session, kb_ids, user_input, settings=settings)
+            span.attributes.update({"hit_count": len(chunks), "used_kb_ids": used_kb_ids})
+            span.output = {"chunk_ids": [chunk.chunk_id for chunk in chunks]}
+    except AppError as exc:
+        logger.warning("chat.retrieval_failed", kb_ids=kb_ids, error_code=str(exc.code))
+        await emitter.emit(
+            SseEventType.RETRIEVAL_COMPLETED,
+            RetrievalCompletedPayload(kb_ids=kb_ids, query=user_input, hit_count=0),
+        )
+        return None, EMPTY_RETRIEVAL_NOTICE
+
+    await emitter.emit(
+        SseEventType.RETRIEVAL_COMPLETED,
+        RetrievalCompletedPayload(kb_ids=used_kb_ids, query=user_input, hit_count=len(chunks)),
+    )
+    blocks = build_context_blocks(chunks)
+    return (blocks, None) if blocks else (None, EMPTY_RETRIEVAL_NOTICE)
+
+
 async def _execute(
     *,
     settings: Settings,
@@ -269,6 +321,14 @@ async def _execute(
                 settings=settings,
                 toolkit=tool_service.build_toolkit(session, settings, tool_ids=agent_spec.tool_ids),
             )
+            retrieved_context, retrieval_notice = await _retrieve_context(
+                session,
+                settings,
+                agent_spec=agent_spec,
+                user_input=user_input,
+                emitter=emitter,
+                tracer=tracer,
+            )
             result = await runtime.run(
                 agent_spec,
                 user_input,
@@ -276,6 +336,8 @@ async def _execute(
                 emit=emitter,
                 cancel=cancel_event,
                 before_seq=before_seq,
+                retrieved_context=retrieved_context,
+                retrieval_notice=retrieval_notice,
             )
             await tracer.end_run(
                 run_trace,

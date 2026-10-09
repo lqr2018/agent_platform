@@ -23,12 +23,20 @@ def build_system_message(
     agent: AgentSpec,
     *,
     retrieved_context: Sequence[str] | None = None,
+    retrieval_notice: str | None = None,
 ) -> ChatMessage:
-    """装配 system 消息（Phase 5 的检索块在 prompt 之后追加）。"""
+    """装配 system 消息（Phase 5 的检索块在 prompt 之后追加）。
+
+    - `retrieved_context` 非空 → 追加 4.4.2 的 `<chunk …>` 块（头一行是 4.6.3 的"以下是知识库检索结果"）；
+    - 否则 `retrieval_notice` 非空 → 只追加 4.6.3 的"未检索到相关内容"提示。
+      两者互斥：无命中时既不注入空段落，也不用"检索结果"的头，避免模型把"空结果"当成事实。
+    """
     parts = [agent.system_prompt.strip() or DEFAULT_SYSTEM_PROMPT]
     if retrieved_context:
         parts.append(RETRIEVAL_BLOCK_HEADER)
         parts.extend(retrieved_context)
+    elif retrieval_notice:
+        parts.append(retrieval_notice)
     return ChatMessage.system("\n\n".join(parts))
 
 
