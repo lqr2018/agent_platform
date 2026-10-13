@@ -2,19 +2,27 @@
 #
 # 图：start → planner(agent) → search(tool) → router(condition) → reader(retriever) → writer(agent) → end
 #
-# 说明（Phase 5 现状）：
+# 说明：
 #
-# - `agent_id` / `tool_name` 是**占位名**：Phase 8 的 `seed_demo` 会按 name 解析成真实 id
-#   （8.1 的 Agent 配置里 `tools: [web_search, ...]` 同理），因此本文件在写库前只做结构校验；
+# - `agent_id` / `tool_name` / `kb_id` 都是**按 name 引用**：分别是 `configs/agents/*.yaml` 里的
+#   `agent.name`（如 "Knowledge Assistant"）、`tools.name`、`knowledge_bases.name`；Phase 8 的
+#   `seed_demo`（8.1）写库时把它们解析成真实 id，因此本文件在写库前只做结构校验；
+# - **图内的 `agent` 节点不能引用绑定了 Workflow 的 Agent**（4.4.4：`NESTED_WORKFLOW_NOT_SUPPORTED`，
+#   `runtime/workflow/graph.py`）——否则 Chat 内联（`agent.workflow_id` 非空）会无限展开。本图绑给
+#   Demo 1 的 Research Agent（8.1 的 `workflow: "research-flow"`）用，因此 `planner` / `writer`
+#   引用的是**同为 Demo、未绑定 Workflow** 的 Knowledge Assistant：节点角色由下面的
+#   `input_template` 表达（"只输出计划" / "按资料撰写"），不靠另造一个 Agent；
 # - `reader` 是 `retriever` 节点（Phase 5 起接真实检索，4.5.2）：`kb_id` 同样必须是**已存在的
 #   知识库 id**；查不到时 `on_error=continue` 会把 `KB_NOT_FOUND` 写进 `output_key` 并继续；
+# - 入参键统一为 **`input`**：Chat 内联（4.4.4）注入 `{"input": 用户消息, "conversation_id", "agent_id"}`，
+#   手工运行（`POST /workflows/{id}/runs`）也传 `{"input": {"input": "……"}}` —— 两种入口共用同一份模板；
 # - 只想跑 LLM 那条链（不配知识库）时，把 `reader` 节点删掉（或暂时改成 `agent` 节点）即可。
 version: 1
 workflow:
   name: research-flow
   description: "多步研究：规划 → 检索 → 命中判断 → 知识库检索 → 撰写"
   state_schema:
-    topic: { type: string }
+    input: { type: string }
     plan: { type: string }
     hits: { type: array }
     chunks: { type: array }
@@ -28,8 +36,10 @@ workflow:
       - id: planner
         type: agent
         name: 规划
-        agent_id: research-planner
-        input_template: "{{state.topic}}"
+        # 图内 agent 节点必须引用**未绑定 Workflow** 的 Agent（文件头的 4.4.4 说明）；
+        # 角色差异由 input_template 表达，不靠另造一个 Agent
+        agent_id: "Knowledge Assistant"
+        input_template: "只输出一条检索计划（一行，不要解释）：{{state.input}}"
         output_key: plan
         next: search
       - id: search
@@ -59,8 +69,8 @@ workflow:
       - id: writer
         type: agent
         name: 撰写
-        agent_id: research-writer
-        input_template: "问题：{{state.topic}}\n线索：{{nodes.search.output}}\n知识库：{{nodes.reader.output}}"
+        agent_id: "Knowledge Assistant"
+        input_template: "问题：{{state.input}}\n线索：{{nodes.search.output}}\n知识库：{{nodes.reader.output}}"
         output_key: draft
         next: end
       - id: end

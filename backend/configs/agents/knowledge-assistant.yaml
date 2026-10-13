@@ -1,0 +1,29 @@
+# knowledge-assistant —— 《详细设计》8.4 Demo 3：Knowledge Assistant（知识库问答型）
+#
+# 不绑 Workflow（8.4）：走 Chat 的固定预检索链路（4.4.2 模式 a）——
+# system 注入 `<chunk id source>` 块 + `retrieval.completed` 事件 + `retriever` span。
+#
+# 引用口径（8.1）：`knowledge_bases` 按 name 引用，`seed_demo` 解析成真实 id；
+# KB 里的语料由 `python -m app.scripts.seed_demo --docs tests/fixtures/docs` 灌入
+# （`kb_search` 工具属迭代 E，MVP 不依赖它）。
+version: 1
+agent:
+  name: "Knowledge Assistant"
+  description: "只依据知识库回答，未命中时明确拒答（带 [1] 引用来源）"
+  tags: ["demo", "knowledge"]
+  model:
+    provider: "default-openai-compatible"
+    name: "qwen-plus"
+    params: { temperature: 0.2, max_tokens: 2000 }
+  system_prompt: |
+    你是产品知识助手。规则：
+    1) 只依据“知识库检索结果”回答，并用 [1] [2] 标注来源编号；
+    2) 检索结果为空时，明确回答“知识库中没有检索到相关内容”，不要编造；
+    3) 先给结论，再给依据，答案尽量短。
+  tools: ["calculator"]
+  knowledge_bases: ["product-docs"]
+  memory:
+    short_term: { strategy: window, max_turns: 12, max_tokens: 6000 }
+    long_term: { enabled: false }
+  max_steps: 8
+  timeout_seconds: 180

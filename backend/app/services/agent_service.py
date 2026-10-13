@@ -88,6 +88,62 @@ async def create_agent(session: AsyncSession, data: AgentCreate) -> Agent:
     return agent
 
 
+async def upsert_agent(session: AsyncSession, data: AgentCreate) -> tuple[Agent, bool]:
+    """按 `name` **幂等装载**（详细设计 7.9 / 8.1 的 `seed_demo`）：同名覆盖、异名新建。
+
+    与 `create_agent` 的唯一差别是"同名不报冲突"：Demo 装载要能反复跑，每次都以 YAML 为
+    唯一事实来源把可配置字段写回。返回 `(agent, created)`。
+
+    三条与单次创建一致的口径：
+
+    - 引用字段（`tool_ids` / `knowledge_base_ids` / `workflow_id`）**每次重新校验** —— YAML 改了
+      但引用失效时必须立刻报错，而不是留一条"看起来能用"的配置；
+    - `system_prompt` 变化时按 2.4 落旧值快照（`note` 记明来源），`prompt_version += 1`；
+    - 只覆盖 YAML 表达的字段；`id` / `created_at` / `prompt_version` 的递增语义不受影响。
+    """
+    await _validate_knowledge_bases(session, data.knowledge_base_ids)
+    await _validate_model(session, provider_id=data.model_provider_id, model_name=data.model_name)
+    await _validate_tools(session, data.tool_ids)
+    await _validate_workflow(session, data.workflow_id)
+
+    existing = (
+        (await session.execute(select(Agent).where(Agent.name == data.name, Agent.deleted_at.is_(None))))
+        .scalars()
+        .first()
+    )
+    if existing is None:
+        return await create_agent(session, data), True
+
+    if data.system_prompt != existing.system_prompt:
+        session.add(
+            AgentPromptVersion(
+                agent_id=existing.id,
+                version=existing.prompt_version,
+                system_prompt=existing.system_prompt,
+                note=f"config sync: {data.name}",
+            )
+        )
+        existing.prompt_version = int(existing.prompt_version) + 1
+
+    existing.description = data.description
+    existing.status = data.status
+    existing.model_provider_id = data.model_provider_id
+    existing.model_name = data.model_name
+    existing.model_params = dict(data.model_params)
+    existing.system_prompt = data.system_prompt
+    existing.tool_ids = list(data.tool_ids)
+    existing.knowledge_base_ids = list(data.knowledge_base_ids)
+    existing.memory_config = data.memory_config.model_dump()
+    existing.workflow_id = data.workflow_id
+    existing.max_steps = data.max_steps
+    existing.timeout_seconds = data.timeout_seconds
+    existing.tags = list(data.tags)
+    existing.is_template = data.is_template
+    await session.commit()
+    await session.refresh(existing)
+    return existing, False
+
+
 async def update_agent(session: AsyncSession, agent_id: str, data: AgentUpdate) -> Agent:
     """`PATCH`：改 `system_prompt` 时先落旧版本快照（2.4）。"""
     agent = await get_agent(session, agent_id)

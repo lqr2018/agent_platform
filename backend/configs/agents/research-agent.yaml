@@ -1,0 +1,37 @@
+# research-agent —— 《详细设计》8.2 Demo 1：Research Agent（研究型）
+#
+# 类型差异**只体现在这份 YAML**：`python -m app.scripts.seed_demo` 把它翻译成 `/api/v1/agents`
+# 的入参，代码里没有任何 Agent 专属分支（8.5 的"无专属代码"验收，由
+# `tests/unit/test_demo_genericity.py` 扫描 `app/**` 复核）。
+#
+# 引用口径（8.1）：`model.provider` / `tools` / `knowledge_bases` / `workflow` 都是**按 name 引用**，
+# 由 `seed_demo` 解析成真实 id：
+#
+# - `web_search`：未配置 `WEB_SEARCH_PROVIDER` + `WEB_SEARCH_API_KEY` 时调用会被拒（`TOOL_DISABLED`），
+#   属于"边界"的一部分（README 已写明）；
+# - `kb_search`（8.2 初稿列过）**不存在**：按需检索工具随迭代 E（SD-12）落地，MVP 的知识库链路
+#   走 Agent 的固定预检索（4.4.2 模式 a，由 `knowledge_bases` 触发）。
+version: 1
+agent:
+  name: "Research Agent"
+  description: "多步研究：规划 → 检索 → 撰写（Workflow + Tool Calling + RAG）"
+  is_template: true
+  tags: ["demo", "research"]
+  model:
+    provider: "default-openai-compatible"
+    name: "qwen-plus"
+    params: { temperature: 0.3, max_tokens: 3000 }
+  system_prompt: |
+    你是一名严谨的研究员。回答问题时请遵循以下流程：
+    1) 先判断是否需要检索（知识库优先，其次网络搜索）；
+    2) 检索后必须给出引用编号，例如 [1]；
+    3) 最终输出结构化报告：结论 / 依据 / 不确定项；
+    4) 若证据不足，直接说明“未找到足够依据”，不要编造。
+  tools: ["web_search", "calculator", "file_read"]
+  knowledge_bases: ["product-docs"]
+  memory:
+    short_term: { strategy: window, max_turns: 12, max_tokens: 6000 }
+    long_term: { enabled: false }
+  workflow: "research-flow"
+  max_steps: 10
+  timeout_seconds: 300

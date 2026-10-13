@@ -10,13 +10,17 @@
 #   （8.4 的"未命中必须说不编造"由 `fallback` 分支保证）；
 # - `kb_id` 必须是**已存在的知识库 id**（`GET /api/v1/knowledge-bases` 返回的 `id`）：查不到会得到
 #   `KB_NOT_FOUND`，节点 `on_error=continue` 把错误文本写进 `chunks` 后继续后续节点；
-# - `kb_id` / `agent_id` 是占位：写库时由 `seed_demo` 解析成真实 id（8.1）。
+# - `kb_id` / `agent_id` 按 name 引用（`knowledge_bases.name` / Demo Agent 名）：写库时由
+#   `seed_demo` 解析成真实 id（8.1）。本图不绑给 Demo 3（8.4 的 Agent `workflow: 无`），
+#   它是"检索 → 命中判断 → 带引用回答 / 明确拒答"的可选图，可在 `/workflows` 页手工试跑。
+# - 入参键统一为 **`input`**（`POST /workflows/{id}/runs` 传 `{"input": {"input": "……"}}`）：
+#   若哪天把它绑给某个 Agent 走 Chat 内联（4.4.4），初始 state 里也正好有 `input`。
 version: 1
 workflow:
   name: kb-qa-flow
   description: "知识库问答：检索 → 命中判断 → 带引用回答 / 明确拒答"
   state_schema:
-    question: { type: string }
+    input: { type: string }
     chunks: { type: array }
     answer: { type: string }
   definition:
@@ -29,7 +33,7 @@ workflow:
         type: retriever
         name: 检索
         kb_id: product-docs
-        query_template: "{{state.question}}"
+        query_template: "{{state.input}}"
         output_key: chunks
         on_error: continue
         next: router
@@ -43,15 +47,15 @@ workflow:
       - id: answer
         type: agent
         name: 回答
-        agent_id: kb-assistant
-        input_template: "问题：{{state.question}}\n资料：{{nodes.retrieve.output}}"
+        agent_id: "Knowledge Assistant"
+        input_template: "问题：{{state.input}}\n资料：{{nodes.retrieve.output}}"
         output_key: answer
         next: end
       - id: fallback
         type: agent
         name: 拒答
-        agent_id: kb-assistant
-        input_template: "问题：{{state.question}}\n资料为空：请明确回答“知识库中没有检索到相关内容”，不要编造。"
+        agent_id: "Knowledge Assistant"
+        input_template: "问题：{{state.input}}\n资料为空：请明确回答“知识库中没有检索到相关内容”，不要编造。"
         output_key: answer
         next: end
       - id: end

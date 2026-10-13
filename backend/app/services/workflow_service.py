@@ -248,6 +248,49 @@ async def publish_workflow(session: AsyncSession, workflow_id: str) -> Workflow:
     return row
 
 
+async def upsert_workflow(
+    session: AsyncSession,
+    data: WorkflowCreate,
+    *,
+    publish: bool = True,
+) -> tuple[Workflow, str]:
+    """按 `name` **幂等装载**（详细设计 7.9 / 8.1 的 `seed_demo`）：返回 `(workflow, action)`。
+
+    `action` ∈ `created` / `updated` / `unchanged`；`publish=True` 且最终状态是 `published` 时
+    追加 `+published` 后缀。
+
+    幂等口径：`definition` / `description` / `state_schema` 都没变且已发布 → **完全不动**
+    （尤其**不涨 `version`**）—— 否则每次重跑演示脚本都会把版本号推高，2.9 的 `version`
+    就失去"发布次数"的语义了。定义变了则先回 `draft`（2.9）再发布。
+    """
+    row = (await session.execute(select(Workflow).where(Workflow.name == data.name).limit(1))).scalars().first()
+    if row is None:
+        created = await create_workflow(session, data)
+        row, action = created, "created"
+    else:
+        action = "unchanged"
+        if data.description != row.description:
+            row.description = data.description
+            action = "updated"
+        if dict(data.state_schema) != dict(row.state_schema or {}):
+            row.state_schema = dict(data.state_schema)
+            action = "updated"
+        if dict(data.definition) != dict(row.definition or {}):
+            graph = await parse_workflow_definition(session, data.definition)
+            row.definition = dict(data.definition)
+            row.start_node_id = graph.start_node_id
+            row.status = str(WorkflowStatus.DRAFT)
+            action = "updated"
+        if action == "updated":
+            await session.commit()
+            await session.refresh(row)
+
+    if publish and row.status != str(WorkflowStatus.PUBLISHED):
+        row = await publish_workflow(session, row.id)
+        action = f"{action}+published"
+    return row, action
+
+
 async def delete_workflow(session: AsyncSession, workflow_id: str) -> None:
     """`DELETE /workflows/{id}`：解开 Agent 引用与历史运行，再删定义。
 

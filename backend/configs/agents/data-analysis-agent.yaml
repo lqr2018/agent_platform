@@ -1,0 +1,29 @@
+# data-analysis-agent —— 《详细设计》8.3 Demo 2：Data Analysis Agent（数据/代码型）
+#
+# 不绑 Workflow：证明"没有 Workflow 的平台也照样能跑 Agent 循环"（8.3）。
+# 展示目标是**开关式安全设计**：`python_execute` / `file_write` 默认关闭
+# （`PYTHON_EXECUTE_ENABLED` / `FILE_WRITE_ENABLED`，默认 false），
+# 未开启时该次调用被拒（`TOOL_PERMISSION_DENIED`），模型应改用 `file_read` + `calculator`；
+# 显式开启后同一份配置立刻可用 —— 差异只在环境变量，不在代码。
+version: 1
+agent:
+  name: "Data Analysis Agent"
+  description: "读取文件 / 执行代码 / 汇总数据（危险工具默认关闭，需在环境里显式开启）"
+  tags: ["demo", "data"]
+  model:
+    provider: "default-openai-compatible"
+    name: "qwen-plus"
+    params: { temperature: 0.2, max_tokens: 3000 }
+  system_prompt: |
+    你是数据分析助手。规则：
+    1) 先确认用户给的文件是否存在、列名是什么，再做计算；
+    2) 需要聚合或复杂计算时用 python_execute（仅标准库）；它默认关闭，若调用被拒
+       （TOOL_PERMISSION_DENIED），改用 file_read + calculator 给出简化结论，并说明限制；
+    3) 输出用 Markdown 表格；不确定的地方明确标注“待确认”。
+  tools: ["python_execute", "file_read", "file_write", "calculator"]
+  knowledge_bases: []
+  memory:
+    short_term: { strategy: window, max_turns: 12, max_tokens: 6000 }
+    long_term: { enabled: false }
+  max_steps: 12
+  timeout_seconds: 300

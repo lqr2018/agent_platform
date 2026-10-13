@@ -28,10 +28,14 @@ cases:
   - id: task-2-knowledge-retrieval
     input: 检索一下平台的核心能力，然后用三句话总结
     expected:
-      - type: tool_sequence
-        value: [kb_search]
-        mode: contains
-        description: 触发了按需检索（或 KB 预检索 span，见报告里的 trace）
+      # 这里**不能**断言 `tool_sequence: [kb_search]`：`kb_search`（按需检索工具）属迭代 E，
+      # MVP 不存在（8.2 / research-agent.yaml 的注释）；Demo 1 的知识库链路走 Agent 的**固定预检索**
+      # （4.4.2 模式 a，由 `knowledge_bases` 触发），而预检索不是工具调用 ——
+      # 4.9.3 的断言类型里没有"span 存在"这一项，硬塞进去只会自欺（contract-suite 同口径）。
+      # 因此确定性断言看"回答里有没有引用编号"，"检索真的发生了"由报告里的 `trace_id` 到 /traces 复核。
+      - type: regex
+        value: "\\[\\d+\\]"
+        description: 回答带 [n] 引用编号（预检索命中的 chunk）
       - type: llm_judge
         rubric: |
           回答必须基于检索到的知识库内容（可看到引用/片段来源），并用不超过三句话总结。
@@ -42,10 +46,12 @@ cases:
   - id: task-3-multi-step-tool
     input: 先检索平台的核心能力，再计算 12 * (3 + 3)
     expected:
+      # `kb_search` 属迭代 E（同 task-2）：这里的"多步"指预检索之后仍能调工具并答对，
+      # 所以只断言工具序列里含 `calculator`。
       - type: tool_sequence
-        value: [kb_search, calculator]
+        value: [calculator]
         mode: in_order
-        description: 多步工具调用，顺序正确（允许中间多调工具）
+        description: 预检索之后仍走工具循环（允许中间多调工具）
       - type: contains
         value: "72"
 
