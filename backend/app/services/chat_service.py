@@ -228,7 +228,7 @@ async def _start_inline_workflow(
     )
 
 
-async def _retrieve_context(
+async def retrieve_context(
     session: AsyncSession,
     settings: Settings,
     *,
@@ -321,7 +321,7 @@ async def _execute(
                 settings=settings,
                 toolkit=tool_service.build_toolkit(session, settings, tool_ids=agent_spec.tool_ids),
             )
-            retrieved_context, retrieval_notice = await _retrieve_context(
+            retrieved_context, retrieval_notice = await retrieve_context(
                 session,
                 settings,
                 agent_spec=agent_spec,

@@ -77,14 +77,14 @@ frontend  →  /api/v1 (HTTP + SSE)  →  api
 | Tool Calling：Tool Registry / 权限分级 / 沙箱 | ✅ Phase 2（M2） |
 | Workflow：串行图 / 状态落库 / 断点续跑 | ✅ Phase 3（M2） |
 | RAG：知识库 / 摄取 / 检索 / 引用 | ✅ Phase 5（M3）：后端 + 知识库页 + Chat 引用来源卡片 |
-| Trace 与轻量评测（`scripts/evaluate.py`） | Phase 7（M3） |
+| 评测脚本：断言 / 指标 / 报告（`python -m app.scripts.evaluate`） | ◐ Phase 7（M3）：CLI 与契约用例集已落地；`/stats/overview`、`traces/{id}/tree`、评测页待补 |
 | Memory / MCP / 审批后台 / 评测平台 | 设计已就位，**不在第一阶段**（《详细设计》0.5.3 Backlog） |
 
 ---
 
 ## 5. 当前进度
 
-**已完成：Phase 0 项目基础设施 + Phase 1 最小 Agent Runtime + Phase 2 Tool Calling + Phase 3 Workflow + Phase 5 RAG（后端 + 前端）**（对齐《详细设计》7.1 / 7.2 / 7.3 / 7.4 / 7.6）
+**已完成：Phase 0 项目基础设施 + Phase 1 最小 Agent Runtime + Phase 2 Tool Calling + Phase 3 Workflow + Phase 5 RAG（后端 + 前端）+ Phase 7 的评测脚本链路**（对齐《详细设计》7.1 / 7.2 / 7.3 / 7.4 / 7.6 / 7.8）
 
 Phase 0（基础设施）：
 
@@ -144,13 +144,27 @@ Phase 5（RAG 知识库，**先于 Phase 4 落地**，见《详细设计》附�
 - [x] 文档：`docs/diagrams/phase-5-rag.md`（附录 F 规则 3）+ 1.1.1 落点更新
 - [x] **前端**：`api/kb.ts`（12 端点 + `verify-index` 对账）+ `/knowledge` 知识库页（列表 / 新建与编辑 / 上传 multipart / 文档表 2s 进度轮询 / 切片预览弹窗 / 检索试算多 KB）+ Chat 引用来源卡片（`components/chat/CitationCard.tsx` 消费事件 10）+ Agent 编辑页的 `knowledge_base_ids` 绑定入口
 
+Phase 7（评测脚本链路；**未做项在块尾单独列出**，落点与偏差见《详细设计》附录 F v1.19）：
+
+- [x] 运行时 `app/runtime/eval/`：6 类确定性断言（`contains` / `regex` / `equals` / `json_path` / `tool_sequence`（`exact` / `contains` / `in_order` 三种 mode）/ `max_latency`）+ `llm_judge`（强制 JSON、阈值判定、成本计入）；断言**全部执行、不短路**，失败项带 `detail`（期望 vs 实际）
+- [x] `EvalRunner` + `YamlSuiteSource`：用例来自 `configs/eval/*.yaml`（取代 DB 用例表）、用例级并发上限、单 case 超时、三终态 `passed` / `failed` / `error`（**执行异常**与**断言求值不了**都归位 `error`，与"断言没过"区分开）
+- [x] 指标（4.9.2 口径）：`task_success_rate` / `tool_success_rate` / `workflow_success_rate`（无 workflow 用例时为 `null`）/ 平均与 P95 延迟 / 平均工具调用 / 平均 token / 成本 / 错误率 / judge 分数分布
+- [x] 报告：大纲式文本 + `data/reports/eval-*.md|json` 落盘（`REPORT_KEEP` 轮转），每条失败用例附 `trace_id`
+- [x] `python -m app.scripts.evaluate`：`--suite` / `--agent` / `--cases` / `--concurrency` / `--judge` / `--output` / `--json` / `--timeout`；`--json` **只**打结构化结果（与落盘同源），退出码 = `failed + errors`，配置/环境问题 → `2`
+- [x] 接线真实运行时（4.9.1）：每个用例 = 独立 conversation + 一条 `runs.kind=eval`（`trace_id` 可在 `/traces` 定位），预检索复用 `chat_service.retrieve_context`，Agent 带 `workflow_id` 时由引擎驱动
+- [x] 用例集：`configs/eval/contract-suite.yaml`（离线契约，`FakeLLMProvider`，5 条启用）、`configs/eval/demo-suite.yaml`（真实模型 + `llm_judge`，`research-agent`）；`task-6-kb-search`（迭代 E）与 `task-6-mcp-remote-tool`（迭代 B）为 `enabled: false` 占位，不计入分母
+- [x] 文档：`docs/diagrams/phase-7-eval.md`（附录 F 规则 3）+ 附录 F v1.19 + 7.8 DoD 勾选（只勾实测达成的 1 / 2 条）
+- [ ] **未做（不假装完成）**：`GET /stats/overview` 与 `GET /traces/{trace_id}/tree`（7.8 任务 5 / 6 的剩余部分）；`eval_*` 四张表、`eval_api.py`、Evaluation 页面属**迭代 D**
+
 **验证情况（Phase 5 后端）**：`pytest` 全量通过（unit + 19 个 integration 文件）、`ruff check` / `ruff format --check` / `mypy app` 0 告警、`alembic check` 干净（head = `0005_phase5_knowledge_tables`）、`python -m app.scripts.check_readyz` 通过、`export_openapi` 幂等（`frontend/src/types/api.d.ts` 已随之重导）。知识库端到端在 `tests/integration/test_knowledge_api.py`：上传 → `ready` → 命中（带 `source`）→ 删除后不再命中、同 checksum 不重复 embed（断言 embedding 调用次数）、`verify-index` 两端计数一致、Chat 预检索的事件 10 与 `<chunk>` 注入（含未命中与未绑 KB 两个分支）、Workflow `retriever` 节点的命中与 `KB_NOT_FOUND` 分支。
 
 **验证情况（Phase 5 前端）**：`npm run lint`（eslint 0 告警）/ `prettier --check` / `tsc --noEmit` / `vitest`（**47 项**，10 个文件）/ `vite build`（3077 modules，`dist/assets/index-*.js` 1.35 MB，gzip 424 kB）全绿。新增用例：`src/api/__tests__/kb.test.ts`（12 个端点的 URL / 方法 / body，特别钉住 multipart **不手写** `Content-Type`、`/query` 的多库 `kb_ids`、`verify-index` 走 `/maintenance`）、`src/components/chat/CitationCard.test.tsx`（未命中 / 明细在拉 / 明细已到 / 拉取失败四态）、`src/pages/__tests__/KnowledgePage.test.tsx`（列表口径与空态）、`src/stores/chatStore.test.ts` 的事件 10 三条（骨架与补拉、未命中即终结、无检索轮次不清空）。前端落点见《详细设计》附录 F v1.18（含"事件 10 只带计数、切片正文按需补拉"的口径）。
 
+**验证情况（Phase 7 评测脚本链路）**：`pytest` **616 项**（612 passed + 4 skipped）、覆盖率 **89.66%**（`TOTAL 9267 958 90%`，门槛 `--cov-fail-under=70`）、`ruff check` / `ruff format --check .`（193 files）/ `mypy app`（121 source files）0 告警、`alembic check` 干净（`No new upgrade operations detected`；本阶段**无新增表**）、`python -m app.scripts.check_readyz` 通过（`ok=True revision 0005_phase5_knowledge_tables`）、`export_openapi` 后 `docs/openapi.json` 无 diff（**API 契约未变**）。新增用例 52 项：`tests/unit/test_eval_assertions.py`（20）/ `test_eval_runner.py`（15）/ `test_eval_metrics.py`（8）/ `test_eval_judges.py`（5）+ `tests/integration/test_eval_contract_suite.py`（4）。契约套件的端到端证据（`test_eval_contract_suite.py`，真实 `create_app()` + lifespan + `FakeLLMProvider` + 内存向量库）：`configs/eval/contract-suite.yaml` 的 5 条启用用例全 `passed`（`task_success_rate=1.0`、`tool_success_rate=0.75`、`workflow_success_rate=null`、`avg_tool_calls=0.8`），5 条 `runs.kind=eval` 全 `succeeded` 且各自独立会话，4 行 `tool_invocations` 中 `task-4-tool-error-backfill` 那行 `failed` / `TOOL_EXECUTION_FAILED`（证明"工具失败回填给模型、Run 仍成功"），每个 Run 恰好 1 个 `retriever` span（`strategy=prefetch`、`hit_count>=1`、`output.chunk_ids` 非空 —— 预检索真的进了 system）；CLI 侧（真子进程跑 `python -m app.scripts.evaluate`）钉住 `--json` 只打 JSON、stdout 与落盘 `.json` 同源、失败用例退出码 = `failed + errors` 且带 `trace_id`、`--cases` 指定 `enabled: false` 的占位用例 → `CONFIG_INVALID` + 退出码 `2` 且不落半份报告。
+
 **验证情况（Phase 0–3，基线）**：后端 `pytest` **509 项**（506 passed + 3 skipped）、覆盖率 **91%**（`TOTAL 6994 631 91%`）、`ruff check` / `ruff format --check` 0 告警、`mypy app` 通过、`alembic` 往返 + `alembic check`（`No new upgrade operations detected`）、就绪探针 `python -m app.scripts.check_readyz` 通过（`ok=True revision 0004_phase3_workflow_tables`）、`export_openapi` 幂等（连续两次同哈希）；前端 `eslint` / `prettier` / `tsc` / `vitest`（**28 项**）/ `vite build` 全绿。Phase 1/2 的回归用例全绿（无 Workflow 的 Agent 与 Chat 行为不变）；Phase 3 的端到端链路（真实 `create_app()` + lifespan + SQLite：建图 → 发布 → 202 运行 → 轮询 `node-runs` → resume/cancel/内联 Chat 流）见 `tests/integration/test_workflow_runner.py`。说明：`app/services/**` 与 `app/api/**` 的行覆盖率在本机 coverage 下会漏记"`await` 之后的尾行"（《详细设计》7.2 记录的口径），因此服务层另有直测补充（`tests/integration/test_workflow_runner.py` 直接断言落库结果与 `node_runs` 序列）。
 
-下一步：**M3 的收口**（Trace 详情树 / 指标看板 / 评测脚本与报告，见《详细设计》7.8 / 7.9），随后是迭代 E（`kb_search` 工具、`PdfLoader` / `WebLoader` / `Reranker`、`runtime/rag` 拆子包，见 4.4.2 / 4.6.1）。
+下一步：**M3 的剩余项**（`GET /stats/overview` 指标看板、`GET /traces/{trace_id}/tree` 服务端建树 + 前端折叠，见《详细设计》7.8 任务 5 / 6），随后是 Phase 8 收口（三个 Demo Agent + 演示脚本 + README，见 7.9）；再往后是迭代 E（`kb_search` 工具、`PdfLoader` / `WebLoader` / `Reranker`、`runtime/rag` 拆子包，见 4.4.2 / 4.6.1）。
 
 ---
 

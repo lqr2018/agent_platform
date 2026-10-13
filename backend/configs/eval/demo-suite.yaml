@@ -1,0 +1,80 @@
+# 真实模型用例集（详细设计 4.9.4：本地/发版前跑，产出 `data/reports/eval-*.md` 贴进 README）。
+#
+# 用法（在 `backend/` 下，先 `python -m app.scripts.seed_demo` 或手工建好 Agent）：
+#
+#     python -m app.scripts.evaluate --suite demo-suite --agent research-agent
+#
+# 与 `contract-suite` 的分工：这里断言的是**模型能力**（能不能选对工具、答得对不对），
+# 所以用真实 provider；`llm_judge` 仅在前两条确定性断言不够表达"回答质量"时使用（4.9.4 风险与对策：
+# judge 结果仅供参考，确定性断言优先，报告里同时给出 judge 分数分布）。
+name: demo-suite
+agent: research-agent
+description: Research Agent 的主路径用例（计算 / 检索 / 多步 / 表达）
+cases:
+  - id: task-1-calculator
+    input: 计算 12 * (3 + 3)，只给结果
+    timeout_seconds: 120
+    expected:
+      - type: contains
+        value: "72"
+        description: 答对算式（模型必须真的算，而不是复述题目）
+      - type: tool_sequence
+        value: [calculator]
+        mode: contains
+        description: 用了 calculator 工具
+      - type: max_latency
+        value_ms: 60000
+
+  - id: task-2-knowledge-retrieval
+    input: 检索一下平台的核心能力，然后用三句话总结
+    expected:
+      - type: tool_sequence
+        value: [kb_search]
+        mode: contains
+        description: 触发了按需检索（或 KB 预检索 span，见报告里的 trace）
+      - type: llm_judge
+        rubric: |
+          回答必须基于检索到的知识库内容（可看到引用/片段来源），并用不超过三句话总结。
+          若回答是空泛的通用描述、或未引用任何检索内容，则分数不得高于 0.4。
+        threshold: 0.6
+        description: 回答质量（参考项）
+
+  - id: task-3-multi-step-tool
+    input: 先检索平台的核心能力，再计算 12 * (3 + 3)
+    expected:
+      - type: tool_sequence
+        value: [kb_search, calculator]
+        mode: in_order
+        description: 多步工具调用，顺序正确（允许中间多调工具）
+      - type: contains
+        value: "72"
+
+  - id: task-4-memory
+    input: 你好，请用一句话介绍你自己
+    expected:
+      - type: llm_judge
+        rubric: |
+          回答应当礼貌、用一句话说明自己是AI 助手（或该 Agent 的定位），不得编造不存在的工具/数据。
+          空回答或与提问无关的内容得 0 分。
+        threshold: 0.5
+        description: 无工具路径的表达质量（参考项）
+
+  - id: task-5-explain-math
+    input: 计算 (9 - 4) * 6，并解释每一步
+    expected:
+      - type: contains
+        value: "30"
+      - type: llm_judge
+        rubric: |
+          回答必须包含计算过程的解释（先括号内、再相乘），最终结果 30 明确给出。
+          只给结果、没有过程的回答不得高于 0.5。
+        threshold: 0.6
+
+  # MCP 工具属 Backlog（SD-16）：先留位，等迭代 B 再启用（本用例不计入分母，4.9.2）
+  - id: task-6-mcp-remote-tool
+    enabled: false
+    input: 用远程 MCP 工具查一下今天的汇率
+    expected:
+      - type: tool_sequence
+        value: [mcp_echo]
+        mode: contains
