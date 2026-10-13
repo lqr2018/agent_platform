@@ -10,7 +10,8 @@
 装载顺序（引用必须先生成）：
 
 1. 内置工具对齐（`tool_service.sync_builtin_tools`：代码是唯一事实来源）；
-2. Provider 解析（`--provider` → YAML 里的 `model.provider` name → 平台默认 Provider）；
+2. Provider 解析：**每个 Agent 用自己 YAML 里的 `model.provider`**（按 name 解析）；`--provider` 传了就
+   统一覆盖全部 Agent，YAML 里的名字库里没有 → 退回平台默认 Provider；
 3. 知识库（YAML 引用到但库里没有的**按 name 创建**，用 embedding provider；已存在则原样复用）；
 4. Agent 第一遍（`upsert_agent`，不带 `workflow_id`）—— 先把 name → id 定下来；
 5. Workflow（`configs/workflows/*.yaml`，`agent_id` / `kb_id` 占位名解析成真实 id，然后发布）；
@@ -20,7 +21,14 @@
 零代码差异（8.5）：本脚本只把 YAML 翻译成 API 的入参，**不含任何 Agent 专属分支** ——
 新增一个 Demo 只需新增一份 YAML（`tests/unit/test_demo_genericity.py` 扫描 `app/**` 复核）。
 
-退出码：`0` = 全部就绪；`2` = 环境/配置问题（库未迁移、provider / tool 名字写错、embedding 不可用）。
+`--reset` 是**硬删**：同名 Agent / Workflow 连同它的会话、消息、Run、Trace、Span、工具调用记录一起
+删掉（SQLite 没开 FK 级联，脚本里显式收尾 —— 不留悬空指针给 `/traces`、`/runs` 去踩）。
+**别人的东西不动**：不挂在配置里的 Agent，它跑过的 Run（哪怕跑的就是这张图）与它自己绑的这张图
+都保留下来，只把 `runs.workflow_run_id` / `agents.workflow_id` 显式置空（模型声明的是 `SET NULL`）。
+
+退出码：`0` = 全部就绪；`2` = 环境/配置问题（库未迁移、配置写错或重名、provider / tool 名字写错、
+embedding 不可用、演示语料目录不存在或摄取失败）。配置文件的解析 / 编码错误也走 `2`（带文件名），
+不再是一串裸 traceback。
 """
 
 from __future__ import annotations
@@ -29,12 +37,14 @@ import argparse
 import asyncio
 import copy
 import sys
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
-from sqlalchemy import delete, or_, select
+import yaml
+from pydantic import ValidationError
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
@@ -42,13 +52,18 @@ from app.core.enums import DocumentStatus
 from app.core.errors import AppError, ConfigInvalidError
 from app.db.models import (
     Agent,
+    AgentPromptVersion,
     Conversation,
     Document,
     KnowledgeBase,
+    Message,
     ModelProvider,
     NodeRun,
     Run,
+    Span,
     Tool,
+    ToolInvocation,
+    Trace,
     Workflow,
     WorkflowRun,
 )
@@ -126,10 +141,17 @@ async def seed(
     await tool_service.sync_builtin_tools(session)
     tools = {row.name: row for row in await tool_service.list_tools(session)}
 
-    agent_configs = agent_config.load_agent_configs(config_dir)
-    workflow_configs = workflow_config.load_workflow_configs(workflow_dir)
+    agent_configs = _load_config_files(
+        agent_config.list_agent_config_paths(config_dir), agent_config.load_agent_config, kind="agent"
+    )
+    workflow_configs = _load_config_files(
+        workflow_config.list_workflow_config_paths(workflow_dir), workflow_config.load_workflow_config, kind="workflow"
+    )
     if not agent_configs:
         raise ConfigInvalidError("No agent configs found", details={"directory": str(config_dir)})
+    # name 就是幂等键（8.1）：同名配置会让后一份静默覆盖前一份，装载期直接拒绝
+    _reject_duplicate_names([cfg.agent.name for cfg in agent_configs], kind="agent")
+    _reject_duplicate_names([cfg.workflow.name for cfg in workflow_configs], kind="workflow")
 
     if reset:
         for agent_cfg in agent_configs:
@@ -137,9 +159,13 @@ async def seed(
         for workflow_cfg in workflow_configs:
             await _reset_workflow_by_name(session, workflow_cfg.workflow.name)
 
-    resolved_provider = await _resolve_provider(
-        session, provider_ref or agent_configs[0].agent.model.provider, role="model"
-    )
+    # 2) Provider 解析：按每个 Agent 自己的 `model.provider` 引用去查（`--provider` 统一覆盖）
+    provider_refs = sorted({provider_ref or cfg.agent.model.provider for cfg in agent_configs})
+    providers = {ref: await _resolve_provider(session, ref, role="model") for ref in provider_refs}
+
+    def provider_id_for(body: agent_config.AgentConfigBody) -> str:
+        """该 Agent 绑定的 Provider id（YAML 的 `model.provider`；`--provider` 传了就用它）。"""
+        return providers[provider_ref or body.model.provider].id
 
     # 3) 知识库：把 YAML 引用到的 name 先建出来（Agent 与 Workflow 都要用它的 id）
     kb_refs = _collect_kb_refs(agent_configs, workflow_configs)
@@ -165,7 +191,7 @@ async def seed(
             session,
             _to_agent_create(
                 body,
-                provider_id=resolved_provider.id,
+                provider_id=provider_id_for(body),
                 model_name=model_name or body.model.name,
                 tool_ids=_tool_ids(body, tools),
                 knowledge_base_ids=_knowledge_base_ids(body, kb_ids),
@@ -213,7 +239,7 @@ async def seed(
             session,
             _to_agent_create(
                 body,
-                provider_id=resolved_provider.id,
+                provider_id=provider_id_for(body),
                 model_name=model_name or body.model.name,
                 tool_ids=_tool_ids(body, tools),
                 knowledge_base_ids=_knowledge_base_ids(body, kb_ids),
@@ -228,6 +254,50 @@ async def seed(
             if kb_row is not None:
                 report.documents.extend(await _ingest_docs(session, kb=kb_row, directory=docs_dir))
     return report
+
+
+_ConfigT = TypeVar("_ConfigT")
+
+CONFIG_FILE_ERRORS = (ValidationError, yaml.YAMLError, UnicodeDecodeError, OSError)
+"""配置文件层面的失败（schema 不合法 / YAML 语法错 / 编码错 / 读不了）。
+
+`agent_config` / `workflow_config` 刻意保留 pydantic / PyYAML 的原始异常（结构化、可编程处理，
+见两个模块的 docstring）；脚本这一层要的是"写错文件 → 退出码 2 + 一行可读信息"，因此在这里收口 ——
+与 `evaluate.py` 的 `YamlSuiteSource.load()`（同样把配置问题变成 `CONFIG_INVALID`）同一约定。
+"""
+
+
+def _load_config_files(paths: Sequence[Path], loader: Callable[[Path], _ConfigT], *, kind: str) -> list[_ConfigT]:
+    """逐个文件装载；任何一个文件不合法 → `ConfigInvalidError`（details 带文件名与首条错误）。"""
+    loaded: list[_ConfigT] = []
+    for path in paths:
+        try:
+            loaded.append(loader(path))
+        except CONFIG_FILE_ERRORS as exc:
+            raise ConfigInvalidError(
+                f"Invalid {kind} config file: {path.name}",
+                details={"file": str(path), "error": _describe_config_error(exc)},
+            ) from exc
+    return loaded
+
+
+def _describe_config_error(exc: Exception) -> str:
+    """把多行报错压成一行（`stderr` 一行一条，方便 `demo.ps1` 的失败提示）。"""
+    if isinstance(exc, ValidationError):
+        first = exc.errors()[0]
+        where = ".".join(str(part) for part in first.get("loc", ()))
+        message = str(first.get("msg", ""))
+        return f"{where}: {message}" if where else message
+    if isinstance(exc, yaml.YAMLError):
+        return " ".join(str(exc).split())  # PyYAML 的报错自带行列信息，压成一行即可
+    return f"{type(exc).__name__}: {exc}"
+
+
+def _reject_duplicate_names(names: Sequence[str], *, kind: str) -> None:
+    """同名配置 = 幂等键冲突（8.1 的 `name`）：后一份会**静默覆盖**前一份，宁可失败。"""
+    duplicates = sorted({name for name in names if names.count(name) > 1})
+    if duplicates:
+        raise ConfigInvalidError(f"Duplicate {kind} name(s) in configs", details={f"{kind}_names": duplicates})
 
 
 def _tool_ids(body: agent_config.AgentConfigBody, tools: Mapping[str, Tool]) -> list[str]:
@@ -488,21 +558,45 @@ async def _wait_document(document_id: str) -> str:
 
 
 async def _reset_agent_by_name(session: AsyncSession, name: str) -> None:
-    """`--reset`：硬删同名 Agent 及其会话 / 运行记录（SQLite 未开 FK 级联，这里显式收尾）。"""
+    """`--reset`：硬删同名 Agent 及其会话 / 消息 / Run / Trace / Span / 工具调用 / prompt 快照。
+
+    SQLite **没开** `PRAGMA foreign_keys`（`db/session.py` 只设 WAL / `synchronous` / `busy_timeout`），
+    模型上 `ForeignKey(..., ondelete=...)` 的级联**运行时并不生效** —— 所以这里逐表显式删，否则
+    `--reset` 会留下悬空行（典型症状：`/traces` 里有一条 Run 已经不存在的 Trace）。
+    删除范围与模型声明的语义逐条对齐：`runs.agent_id` 是 `SET NULL`，其子行一律跟着走。
+    """
     rows = (await session.execute(select(Agent).where(Agent.name == name))).scalars().all()
     for row in rows:
+        run_ids = select(Run.id).where(Run.agent_id == row.id)
+        conversation_ids = select(Conversation.id).where(Conversation.agent_id == row.id)
+        # spans / traces / tool_invocations 的 run_id 是 CASCADE：Run 没了它们也不该留
+        await session.execute(delete(Span).where(Span.trace_id.in_(select(Trace.id).where(Trace.run_id.in_(run_ids)))))
+        await session.execute(delete(Trace).where(Trace.run_id.in_(run_ids)))
+        await session.execute(delete(ToolInvocation).where(ToolInvocation.run_id.in_(run_ids)))
+        # 会话没了 → 它的消息跟着走（messages.conversation_id 是 CASCADE）
+        await session.execute(delete(Message).where(Message.conversation_id.in_(conversation_ids)))
+        # 会话还在、只是 Run 没了的消息**保留**（messages.run_id 是 SET NULL，历史不能丢内容）
+        await session.execute(update(Message).where(Message.run_id.in_(run_ids)).values(run_id=None))
         await session.execute(delete(Run).where(Run.agent_id == row.id))
         await session.execute(delete(Conversation).where(Conversation.agent_id == row.id))
+        await session.execute(delete(AgentPromptVersion).where(AgentPromptVersion.agent_id == row.id))
         await session.delete(row)
     if rows:
         await session.commit()
 
 
 async def _reset_workflow_by_name(session: AsyncSession, name: str) -> None:
-    """`--reset`：硬删同名 Workflow 及其运行 / 节点记录。"""
+    """`--reset`：硬删同名 Workflow 及其运行 / 节点记录。
+
+    `runs.workflow_run_id` / `agents.workflow_id` 都是 `SET NULL`：别的 Agent 也跑过 / 绑过这张图时，
+    那条 Run 与那个 Agent 属于**用户资产** —— 不能跟着删，只能把指针显式置空（这就是"不留悬空指针"
+    的完整含义：删完之后 `/agents`、`/chat` 不该拿一个已删的 workflow id 去查）。
+    """
     rows = (await session.execute(select(Workflow).where(Workflow.name == name))).scalars().all()
     for row in rows:
         run_ids = select(WorkflowRun.id).where(WorkflowRun.workflow_id == row.id)
+        await session.execute(update(Run).where(Run.workflow_run_id.in_(run_ids)).values(workflow_run_id=None))
+        await session.execute(update(Agent).where(Agent.workflow_id == row.id).values(workflow_id=None))
         await session.execute(delete(NodeRun).where(NodeRun.run_id.in_(run_ids)))
         await session.execute(delete(WorkflowRun).where(WorkflowRun.workflow_id == row.id))
         await session.delete(row)
