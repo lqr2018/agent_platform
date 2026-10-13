@@ -3,14 +3,16 @@
 - `DatabaseSpanSink`：`Tracer` 的落库 sink —— span 结束时**立即写一行**（2.11 的落库策略）；
   写库失败只记 warning，不影响主流程（4.8.2，由 `Tracer` 兜底）；
 - `traces` 行在 Run 开始时插入（`open_trace`），Run 结束时更新终态与汇总（4.8.3）；
-- 查询接口供 `GET /traces*` / `GET /spans/{id}` 使用：列表返回扁平 span（3.2.9）。
+- 查询接口供 `GET /traces*` / `GET /spans/{id}` 使用：列表与详情返回**扁平 span**（3.2.9）；
+  `build_span_tree()` 是 7.8 任务 6 的**服务端建树**（与前端 `TraceTree.buildSpanTree` 同口径），
+  `list_spans(limit=…, cursor=…)` 提供同一任务要求的 **spans 键集分页**。
 """
 
 from __future__ import annotations
 
 import calendar
-from collections.abc import Sequence
-from dataclasses import dataclass
+from collections.abc import Iterator, Sequence
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from decimal import Decimal
 
@@ -20,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.enums import RunStatus, SpanType
 from app.core.errors import NotFoundError
 from app.core.logging import get_logger
+from app.db.base import to_naive_utc
 from app.db.models import Span, Trace
 from app.runtime.observability.tracer import RunTrace
 from app.runtime.observability.tracer import Span as RuntimeSpan
@@ -28,6 +31,15 @@ logger = get_logger(__name__)
 
 TRACE_PAGE_LIMIT = 50
 TRACE_PAGE_MAX = 200
+
+SPAN_PAGE_LIMIT = 200
+"""`GET /traces/{id}` 的 spans 单页上限（3.2.9 / 7.8 任务 6）。"""
+
+SPAN_PAGE_MAX = 500
+"""spans 单页硬上限（请求里写更大的 `limit` 会被夹到这个数）。"""
+
+SPAN_TREE_MAX_NODES = SPAN_PAGE_MAX
+"""`/tree` 的节点上限：树不能分页，所以与 spans 的单页上限取同一个数（超出置 `truncated=true`）。"""
 
 
 @dataclass(slots=True)
@@ -63,7 +75,7 @@ class DatabaseSpanSink:
             kind=str(run_trace.kind),
             status=str(RunStatus.RUNNING),
             span_count=1,  # 根 span
-            started_at=_naive(run_trace.root_span.started_at),
+            started_at=to_naive_utc(run_trace.root_span.started_at),
         )
         self._session.add(trace)
         await self._session.commit()
@@ -89,8 +101,8 @@ class DatabaseSpanSink:
             seq=span.seq,
             error_code=span.error_code,
             error_message=span.error_message,
-            started_at=_naive(span.started_at),
-            ended_at=_naive(span.ended_at) if span.ended_at else None,
+            started_at=to_naive_utc(span.started_at),
+            ended_at=to_naive_utc(span.ended_at) if span.ended_at else None,
         )
         self._session.add(row)
         totals = self._totals.setdefault(span.trace_id, _TraceTotals())
@@ -114,7 +126,7 @@ class DatabaseSpanSink:
             return
         totals = self._totals.get(run_trace.trace_id, _TraceTotals())
         trace.status = str(status)
-        trace.ended_at = _naive(run_trace.root_span.ended_at or datetime.now(UTC))
+        trace.ended_at = to_naive_utc(run_trace.root_span.ended_at or datetime.now(UTC))
         trace.latency_ms = int(run_trace.root_span.latency_ms or 0)
         trace.span_count = totals.span_count
         trace.total_tokens = totals.total_tokens
@@ -146,9 +158,9 @@ async def list_traces(
     if status:
         statement = statement.where(Trace.status == status)
     if from_at is not None:
-        statement = statement.where(Trace.started_at >= _naive(from_at))
+        statement = statement.where(Trace.started_at >= to_naive_utc(from_at))
     if to_at is not None:
-        statement = statement.where(Trace.started_at <= _naive(to_at))
+        statement = statement.where(Trace.started_at <= to_naive_utc(to_at))
     if cursor:
         cursor_at, cursor_id = decode_cursor(cursor)
         statement = statement.where(
@@ -170,10 +182,40 @@ async def get_trace(session: AsyncSession, trace_id: str) -> Trace:
     return trace
 
 
-async def list_spans(session: AsyncSession, trace_id: str) -> Sequence[Span]:
-    """同一 trace 内的扁平 span，按 `seq` 排序（3.2.9：前端自行建树）。"""
-    statement = select(Span).where(Span.trace_id == trace_id).order_by(Span.seq)
-    return (await session.execute(statement)).scalars().all()
+async def list_spans(
+    session: AsyncSession,
+    trace_id: str,
+    *,
+    limit: int | None = None,
+    cursor: str | None = None,
+) -> tuple[Sequence[Span], str | None]:
+    """同一 trace 内的扁平 span，按 `seq` 升序（3.2.9：前端自行建树）。
+
+    `limit` / `cursor` 是 7.8 任务 6 要的 **spans 键集分页**（游标即上一页最后一个 `seq`，
+    与 `list_traces` 一样返回 `(rows, next_cursor)`）；**不传 `limit` 时返回全部 span**
+    —— 这是 Phase 1 以来的既有行为，`load_trace_tree` 也走这条路径。
+    """
+    filters = [Span.trace_id == trace_id]
+    if cursor:
+        filters.append(Span.seq > decode_span_cursor(cursor))
+    statement = select(Span).where(*filters).order_by(Span.seq)
+    if limit is None:
+        return (await session.execute(statement)).scalars().all(), None
+    page_limit = max(1, min(limit, SPAN_PAGE_MAX))
+    rows = list((await session.execute(statement.limit(page_limit + 1))).scalars().all())
+    next_cursor = None
+    if len(rows) > page_limit:
+        rows = rows[:page_limit]
+        next_cursor = str(rows[-1].seq)
+    return rows, next_cursor
+
+
+def decode_span_cursor(cursor: str) -> int:
+    """spans 游标 → `seq`（非整数 / 负数 → `ValueError`，由路由层转 422）。"""
+    seq = int(cursor)
+    if seq < 0:
+        raise ValueError("span cursor must be a non-negative seq")
+    return seq
 
 
 async def get_span(session: AsyncSession, span_id: str) -> Span:
@@ -190,7 +232,7 @@ def encode_cursor(trace: Trace) -> str:
     注意：库里存的是 **naive UTC**（0.2.1），所以用 `calendar.timegm` 按 UTC 解释，
     不能直接用 `datetime.timestamp()`（那会按本机时区解释，导致游标偏移）。
     """
-    started_at = _naive(trace.started_at)
+    started_at = to_naive_utc(trace.started_at)
     micros = calendar.timegm(started_at.timetuple()) * 1_000_000 + started_at.microsecond
     return f"{micros}|{trace.id}"
 
@@ -204,6 +246,76 @@ def decode_cursor(cursor: str) -> tuple[datetime, str]:
     return stamp.replace(tzinfo=None), trace_id
 
 
-def _naive(value: datetime) -> datetime:
-    """aware → naive UTC（SQLite 存 naive，0.2.1）。"""
-    return value.astimezone(UTC).replace(tzinfo=None) if value.tzinfo else value
+# ---- 服务端建树（3.2.9 的 `/tree`；7.8 任务 6） ----
+@dataclass(slots=True)
+class SpanTreeNode:
+    """`/tree` 的一个节点（4.8.1 的层级；`children` 按 `seq` 升序）。"""
+
+    span: Span
+    children: list[SpanTreeNode] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class SpanTree:
+    """建树结果：`roots` / 节点数 / 是否被截断（见 `load_trace_tree`）。"""
+
+    roots: list[SpanTreeNode]
+    node_count: int
+    truncated: bool
+
+
+async def load_trace_tree(
+    session: AsyncSession,
+    trace: Trace,
+    *,
+    max_nodes: int = SPAN_TREE_MAX_NODES,
+) -> SpanTree:
+    """取该 trace 的 span 并建树（3.2.9：`GET /traces/{trace_id}/tree`）。
+
+    `truncated=true` 的三种来源（都表示"树里不是全部 span"，前端据此提示"仅显示前 N 个节点"）：
+    1. 库里还有更多 span（键集分页返回了 `next_cursor`）；
+    2. 超过 `max_nodes`；
+    3. 有 span 不可达（父指针成环等脏数据 —— 直接丢弃，而不是递归爆栈）。
+    """
+    spans, next_cursor = await list_spans(session, trace.id, limit=max_nodes)
+    tree = build_span_tree(spans, max_nodes=max_nodes)
+    truncated = tree.truncated or next_cursor is not None or tree.node_count < trace.span_count
+    return SpanTree(roots=tree.roots, node_count=tree.node_count, truncated=truncated)
+
+
+def build_span_tree(spans: Sequence[Span], *, max_nodes: int = SPAN_TREE_MAX_NODES) -> SpanTree:
+    """扁平 span → 嵌套树（与前端 `TraceTree.buildSpanTree` 同口径，7.8 任务 6）。
+
+    - 按 `parent_span_id` 挂链；**遍历与统计都是迭代实现**（显式栈，不递归 —— 深链也不会爆栈）；
+    - `parent_span_id` 为空 / 指向不存在的 span / 指向自己 → 该 span 当**根**（孤儿不丢）；
+    - 根与兄弟节点按 `seq` 升序（4.8.1 的稳定顺序）；
+    - 入参按 `seq` 升序传入；超过 `max_nodes` 时只取前 `max_nodes` 个并置 `truncated=True`。
+    """
+    ordered = list(spans)[:max_nodes]
+    nodes = {span.id: SpanTreeNode(span=span) for span in ordered}
+    roots: list[SpanTreeNode] = []
+    for node in nodes.values():
+        parent = nodes.get(node.span.parent_span_id or "")
+        if parent is None or parent is node:
+            roots.append(node)
+        else:
+            parent.children.append(node)
+    for node in _walk(roots):
+        node.children.sort(key=_node_sort_key)
+    roots.sort(key=_node_sort_key)
+    node_count = sum(1 for _ in _walk(roots))
+    return SpanTree(roots=roots, node_count=node_count, truncated=node_count != len(spans))
+
+
+def _node_sort_key(node: SpanTreeNode) -> tuple[int, str]:
+    """同层内的稳定顺序：`seq` 升序，`seq` 相同（不该发生）时按 span id。"""
+    return (node.span.seq, node.span.id)
+
+
+def _walk(roots: Sequence[SpanTreeNode]) -> Iterator[SpanTreeNode]:
+    """迭代式深度优先（显式栈）；排序与统计共用，避免递归深度受 span 数影响。"""
+    stack = list(roots)
+    while stack:
+        node = stack.pop()
+        yield node
+        stack.extend(node.children)

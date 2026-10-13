@@ -1,11 +1,11 @@
-# Phase 7（评测脚本链路）时序与链路
+# Phase 7（评测脚本链路 + 指标看板 + Trace 树）时序与链路
 
-> 本文档按《详细设计》附录 F 规则 3，为 **Phase 7 的评测脚本链路**补的时序/流程图（Phase 0–3 见
+> 本文档按《详细设计》附录 F 规则 3，为 **Phase 7** 补的时序/流程图（Phase 0–3 见
 > `phase-0-bootstrap.md` / `phase-1-agent-runtime.md` / `phase-2-tool-calling.md` / `phase-3-workflow.md`，
 > Phase 5 见 `phase-5-rag.md`）。图中的命令、表名、指标名与《详细设计》4.9 / 7.8 一致。
 >
-> **范围**：本图只画已落地的评测脚本链路。`GET /stats/overview`、`GET /traces/{trace_id}/tree` 与
-> Evaluation 页面**尚未落地**（7.8 的 DoD 剩余项 + 迭代 D，见附录 F v1.19）。
+> **范围**：1–3 节是评测脚本链路，4 节是 v1.20 落地的 `GET /stats/overview` 与
+> `GET /traces/{trace_id}/tree`；Evaluation 页面属迭代 D，**尚未落地**（见第 5 节）。
 
 ## 1. 链路总览
 
@@ -79,11 +79,39 @@ cd backend
 `--json` 的 stdout 与 `data/reports/eval-<ts>.json` 是同一份数据（`summary_to_dict`），可直接进 CI 断言；
 退出码即"没过的用例数"，所以 `... ; if ($LASTEXITCODE -ne 0) { throw }` 就能当门禁用（4.9.4）。
 
-## 4. 尚未落地（7.8 剩余项 + 迭代 D，不假装完成）
+## 4. 指标看板与 Trace 树（v1.20 落地，附录 F v1.20）
+
+```text
+GET /api/v1/stats/overview?from=&to=&kind=
+        │ stats_service.overview（3.2.9 / 4.8.3）
+        ├─ runs 计数：succeeded / failed / canceled / running（pending+running）
+        ├─ 收敛 Run 的 avg(latency_ms)、avg(tool_call_count)、avg(total_tokens)、sum(tokens / cost_usd)
+        ├─ spans ⋈ traces：tool span 的 ok 占比（tool_success_rate）
+        │     （窗口：runs 按 runs.started_at，tool span 按 traces.started_at，闭区间）
+        └─ success_rate / error_rate（分母 = 已收敛的 Run；为 0 → null，不报 0.0）
+
+GET /api/v1/traces/{trace_id}/tree
+        ├─ get_trace（未知 id → 404，与 /traces/{id} 同语义）
+        ├─ list_spans(limit=SPAN_TREE_MAX_NODES=500)
+        ├─ build_span_tree：孤儿 / 自环当根，兄弟按 seq 升序，**显式栈不递归**
+        └─ roots + node_count + truncated（库里还有更多 span / 超上限 / 有 span 不可达）
+
+GET /api/v1/traces/{id}?limit=&cursor=      ← 7.8 任务 6 的 spans 键集分页（游标 = 上一页最后一个 seq）
+```
+
+要点：
+
+- **公式写在 `services/stats_service.py` 的模块 docstring 里**：未收敛的 Run 不进比率分母、也不算均值
+  （`tool_call_count` / `total_tokens` 的列默认值是 `0` 而不是 NULL，算进来会系统性拉低均值）；
+- **树不分页，用 `truncated` 表达"这不是全部 span"**：上限 `SPAN_TREE_MAX_NODES = 500`（与 spans 单页上限同数），
+  三种触发条件见 `trace_service.load_trace_tree` 的 docstring；
+- **前端本轮零改动**：`components/trace/TraceTree.tsx` 从 Phase 1 起就按同一份 `parent_span_id` 折叠
+  （服务端建树只是把这套规则搬到后端），`getTrace()` 不传 `limit` 时行为与 Phase 1 一致。
+
+## 5. 尚未落地（Phase 8 的前端收口与迭代 D，不假装完成）
 
 | 项 | 归属 | 现状 |
 |---|---|---|
-| `GET /stats/overview`（成功率/时延/工具调用/token/错误率/成本） | 7.8 任务 5（MVP） | 未落地 |
-| `GET /traces/{trace_id}/tree`（服务端建树 + 前端折叠） | 7.8 任务 6（MVP） | 未落地（Phase 1 已提供 `GET /traces/{id}` 的 span 列表） |
+| `/stats` 看板（六项指标的图表化） | 7.8 交付物 → 并入 7.9 前端收口 | 未落地（接口已就绪：`GET /stats/overview`） |
 | `eval_*` 四张表 + `DbSuiteSource` + `eval_api.py` | 迭代 D | 未落地（MVP 的用例来源是 YAML） |
 | Evaluation 页面（逐用例 `detail` + 历史对比） | 迭代 D | 未落地 |

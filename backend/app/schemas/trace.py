@@ -1,6 +1,7 @@
 """Trace / Span 的 DTO（详细设计 3.2.9 / 2.11）。
 
 - 列表接口返回**扁平 span**（带 `parent_span_id`），前端自行建树（3.2.9）；
+- `GET /traces/{id}/tree` 返回**服务端建好的嵌套树**（`SpanNode` / `TraceTree`，7.8 任务 6）；
 - `GET /spans/{span_id}` 才返回完整 `input` / `output`（列表里不带，避免响应过大）。
 """
 
@@ -69,3 +70,23 @@ class TraceDetail(BaseModel):
 
     trace: TraceRead
     spans: list[SpanSummary] = Field(default_factory=list)
+
+
+class SpanNode(SpanSummary):
+    """`GET /traces/{trace_id}/tree` 的树节点（3.2.9 / 7.8 任务 6）：在扁平 span 上挂 `children`。"""
+
+    children: list[SpanNode] = Field(default_factory=list)
+
+
+class TraceTree(BaseModel):
+    """服务端建好的嵌套树（3.2.9 的 `/tree`）。"""
+
+    trace: TraceRead
+    roots: list[SpanNode] = Field(default_factory=list)
+    node_count: int = 0
+    truncated: bool = False
+    """`true` = 树里不是该 trace 的全部 span（超过节点上限，或有 span 不可达）。"""
+
+
+SpanNode.model_rebuild()
+"""自引用模型：显式 rebuild，避免依赖 pydantic 的隐式解析顺序。"""

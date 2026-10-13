@@ -419,6 +419,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/stats/overview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * 基础指标（成功率 / 时延 / 工具调用 / token / 成本）
+         * @description 3.2.9 的基础指标；`from` / `to` 与 `GET /traces` 同口径（闭区间，naive UTC 落库）。
+         *
+         *     `kind`（`chat` / `workflow` / `eval`）是本次实现补的可选收窄项 —— 评测用例也落 `runs`，
+         *     不过滤时"成功率"会把评测批次算进来（见 7.8）；不外传时统计全部来源。
+         */
+        get: operations["get_overview_api_v1_stats_overview_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/tool-invocations": {
         parameters: {
             query?: never;
@@ -541,8 +564,34 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Trace 概要 + 扁平 span 列表 */
+        /**
+         * Trace 概要 + 扁平 span 列表（键集分页）
+         * @description 3.2.9 的扁平 span 列表；`limit` / `cursor` 是 7.8 任务 6 的 spans 分页（游标即 `seq`）。
+         */
         get: operations["get_trace_api_v1_traces__trace_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/traces/{trace_id}/tree": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Trace 嵌套树（服务端建树，3.2.9 / 7.8 任务 6）
+         * @description `run → agent / workflow → llm / tool / retriever` 的嵌套结构（4.8.1）。
+         *
+         *     树**不参与分页**：最多返回 `trace_service.SPAN_TREE_MAX_NODES` 个节点，超出或数据里有不可达
+         *     span 时 `truncated=true`（前端据此提示"仅显示前 N 个节点 + 用扁平接口翻页"）。
+         */
+        get: operations["get_trace_tree_api_v1_traces__trace_id__tree_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1014,6 +1063,11 @@ export interface components {
             data: components["schemas"]["SpanRead"];
             meta: components["schemas"]["ResponseMeta"];
         };
+        /** ApiResponse[StatsOverview] */
+        ApiResponse_StatsOverview_: {
+            data: components["schemas"]["StatsOverview"];
+            meta: components["schemas"]["ResponseMeta"];
+        };
         /** ApiResponse[ToolDetail] */
         ApiResponse_ToolDetail_: {
             data: components["schemas"]["ToolDetail"];
@@ -1027,6 +1081,11 @@ export interface components {
         /** ApiResponse[TraceDetail] */
         ApiResponse_TraceDetail_: {
             data: components["schemas"]["TraceDetail"];
+            meta: components["schemas"]["ResponseMeta"];
+        };
+        /** ApiResponse[TraceTree] */
+        ApiResponse_TraceTree_: {
+            data: components["schemas"]["TraceTree"];
             meta: components["schemas"]["ResponseMeta"];
         };
         /** ApiResponse[WorkflowRead] */
@@ -2052,6 +2111,68 @@ export interface components {
             summarize_threshold_tokens: number;
         };
         /**
+         * SpanNode
+         * @description `GET /traces/{trace_id}/tree` 的树节点（3.2.9 / 7.8 任务 6）：在扁平 span 上挂 `children`。
+         */
+        SpanNode: {
+            /** Attributes */
+            attributes?: {
+                [key: string]: unknown;
+            };
+            /** Children */
+            children?: components["schemas"]["SpanNode"][];
+            /**
+             * Completion Tokens
+             * @default 0
+             */
+            completion_tokens: number;
+            /**
+             * Cost Usd
+             * @default 0
+             */
+            cost_usd: number;
+            /** Ended At */
+            ended_at?: string | null;
+            /** Error Code */
+            error_code?: string | null;
+            /** Error Message */
+            error_message?: string | null;
+            /** Id */
+            id: string;
+            /** Latency Ms */
+            latency_ms?: number | null;
+            /**
+             * Name
+             * @default
+             */
+            name: string;
+            /** Parent Span Id */
+            parent_span_id?: string | null;
+            /**
+             * Prompt Tokens
+             * @default 0
+             */
+            prompt_tokens: number;
+            /** Run Id */
+            run_id?: string | null;
+            /**
+             * Seq
+             * @default 0
+             */
+            seq: number;
+            /** Span Type */
+            span_type: string;
+            /** Started At */
+            started_at: string;
+            /**
+             * Status
+             * @default running
+             */
+            status: string;
+            /** Trace Id */
+            trace_id: string;
+        };
+        /**
          * SpanRead
          * @description `GET /spans/{span_id}`：含完整 `input` / `output`（已按 4.8.2 截断）。
          */
@@ -2178,6 +2299,82 @@ export interface components {
             status: string;
             /** Trace Id */
             trace_id: string;
+        };
+        /**
+         * StatsOverview
+         * @description `GET /stats/overview`（3.2.9：Run 数 / 成功率 / 平均时延 / 平均工具调用 / token / 成本）。
+         */
+        StatsOverview: {
+            /** Avg Latency Ms */
+            avg_latency_ms?: number | null;
+            /** Avg Tool Calls */
+            avg_tool_calls?: number | null;
+            /** Avg Total Tokens */
+            avg_total_tokens?: number | null;
+            /**
+             * Canceled
+             * @default 0
+             */
+            canceled: number;
+            /** Error Rate */
+            error_rate?: number | null;
+            /**
+             * Failed
+             * @default 0
+             */
+            failed: number;
+            /** From At */
+            from_at?: string | null;
+            /** Generated At */
+            generated_at: string;
+            /** Kind */
+            kind?: string | null;
+            /**
+             * Running
+             * @default 0
+             */
+            running: number;
+            /**
+             * Succeeded
+             * @default 0
+             */
+            succeeded: number;
+            /** Success Rate */
+            success_rate?: number | null;
+            /**
+             * Terminal Runs
+             * @default 0
+             */
+            terminal_runs: number;
+            /** To At */
+            to_at?: string | null;
+            /**
+             * Tool Spans Succeeded
+             * @default 0
+             */
+            tool_spans_succeeded: number;
+            /**
+             * Tool Spans Total
+             * @default 0
+             */
+            tool_spans_total: number;
+            /** Tool Success Rate */
+            tool_success_rate?: number | null;
+            /**
+             * Total Cost Usd
+             * @default 0
+             */
+            total_cost_usd: number;
+            /**
+             * Total Runs
+             * @default 0
+             */
+            total_runs: number;
+            /**
+             * Total Tokens
+             * @default 0
+             */
+            total_tokens: number;
         };
         /**
          * ToolCreate
@@ -2604,6 +2801,25 @@ export interface components {
             total_tokens: number;
             /** Workflow Run Id */
             workflow_run_id?: string | null;
+        };
+        /**
+         * TraceTree
+         * @description 服务端建好的嵌套树（3.2.9 的 `/tree`）。
+         */
+        TraceTree: {
+            /**
+             * Node Count
+             * @default 0
+             */
+            node_count: number;
+            /** Roots */
+            roots?: components["schemas"]["SpanNode"][];
+            trace: components["schemas"]["TraceRead"];
+            /**
+             * Truncated
+             * @default false
+             */
+            truncated: boolean;
         };
         /** ValidationError */
         ValidationError: {
@@ -4047,6 +4263,39 @@ export interface operations {
             };
         };
     };
+    get_overview_api_v1_stats_overview_get: {
+        parameters: {
+            query?: {
+                from?: string | null;
+                to?: string | null;
+                kind?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_StatsOverview_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_tool_invocations_api_v1_tool_invocations_get: {
         parameters: {
             query?: {
@@ -4316,7 +4565,10 @@ export interface operations {
     };
     get_trace_api_v1_traces__trace_id__get: {
         parameters: {
-            query?: never;
+            query?: {
+                limit?: number;
+                cursor?: string | null;
+            };
             header?: never;
             path: {
                 trace_id: string;
@@ -4332,6 +4584,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ApiResponse_TraceDetail_"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_trace_tree_api_v1_traces__trace_id__tree_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                trace_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ApiResponse_TraceTree_"];
                 };
             };
             /** @description Validation Error */

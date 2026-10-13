@@ -57,6 +57,8 @@ async def test_openapi_contains_phase0_and_phase1_endpoints(app_client: AsyncCli
         "/api/v1/traces/{trace_id}",
         "/api/v1/spans/{span_id}",
     } <= paths
+    # Phase 7（7.8 任务 5 / 6）：指标看板与 Trace 树
+    assert {"/api/v1/stats/overview", "/api/v1/traces/{trace_id}/tree"} <= paths
 
 
 async def test_backlog_endpoints_are_not_registered(app_client: AsyncClient) -> None:

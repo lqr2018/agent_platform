@@ -647,6 +647,22 @@
         "title": "ApiResponse[SpanRead]",
         "type": "object"
       },
+      "ApiResponse_StatsOverview_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/StatsOverview"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/ResponseMeta"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "ApiResponse[StatsOverview]",
+        "type": "object"
+      },
       "ApiResponse_ToolDetail_": {
         "properties": {
           "data": {
@@ -693,6 +709,22 @@
           "meta"
         ],
         "title": "ApiResponse[TraceDetail]",
+        "type": "object"
+      },
+      "ApiResponse_TraceTree_": {
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/TraceTree"
+          },
+          "meta": {
+            "$ref": "#/components/schemas/ResponseMeta"
+          }
+        },
+        "required": [
+          "data",
+          "meta"
+        ],
+        "title": "ApiResponse[TraceTree]",
         "type": "object"
       },
       "ApiResponse_WorkflowRead_": {
@@ -3024,6 +3056,143 @@
         "title": "ShortTermConfigDTO",
         "type": "object"
       },
+      "SpanNode": {
+        "description": "`GET /traces/{trace_id}/tree` 的树节点（3.2.9 / 7.8 任务 6）：在扁平 span 上挂 `children`。",
+        "properties": {
+          "attributes": {
+            "additionalProperties": true,
+            "title": "Attributes",
+            "type": "object"
+          },
+          "children": {
+            "items": {
+              "$ref": "#/components/schemas/SpanNode"
+            },
+            "title": "Children",
+            "type": "array"
+          },
+          "completion_tokens": {
+            "default": 0,
+            "title": "Completion Tokens",
+            "type": "integer"
+          },
+          "cost_usd": {
+            "default": 0.0,
+            "title": "Cost Usd",
+            "type": "number"
+          },
+          "ended_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ended At"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "latency_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Latency Ms"
+          },
+          "name": {
+            "default": "",
+            "title": "Name",
+            "type": "string"
+          },
+          "parent_span_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parent Span Id"
+          },
+          "prompt_tokens": {
+            "default": 0,
+            "title": "Prompt Tokens",
+            "type": "integer"
+          },
+          "run_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Run Id"
+          },
+          "seq": {
+            "default": 0,
+            "title": "Seq",
+            "type": "integer"
+          },
+          "span_type": {
+            "title": "Span Type",
+            "type": "string"
+          },
+          "started_at": {
+            "title": "Started At",
+            "type": "string"
+          },
+          "status": {
+            "default": "running",
+            "title": "Status",
+            "type": "string"
+          },
+          "trace_id": {
+            "title": "Trace Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "trace_id",
+          "span_type",
+          "started_at"
+        ],
+        "title": "SpanNode",
+        "type": "object"
+      },
       "SpanRead": {
         "description": "`GET /spans/{span_id}`：含完整 `input` / `output`（已按 4.8.2 截断）。",
         "properties": {
@@ -3306,6 +3475,169 @@
           "started_at"
         ],
         "title": "SpanSummary",
+        "type": "object"
+      },
+      "StatsOverview": {
+        "description": "`GET /stats/overview`（3.2.9：Run 数 / 成功率 / 平均时延 / 平均工具调用 / token / 成本）。",
+        "properties": {
+          "avg_latency_ms": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg Latency Ms"
+          },
+          "avg_tool_calls": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg Tool Calls"
+          },
+          "avg_total_tokens": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg Total Tokens"
+          },
+          "canceled": {
+            "default": 0,
+            "title": "Canceled",
+            "type": "integer"
+          },
+          "error_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Rate"
+          },
+          "failed": {
+            "default": 0,
+            "title": "Failed",
+            "type": "integer"
+          },
+          "from_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "From At"
+          },
+          "generated_at": {
+            "title": "Generated At",
+            "type": "string"
+          },
+          "kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Kind"
+          },
+          "running": {
+            "default": 0,
+            "title": "Running",
+            "type": "integer"
+          },
+          "succeeded": {
+            "default": 0,
+            "title": "Succeeded",
+            "type": "integer"
+          },
+          "success_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Success Rate"
+          },
+          "terminal_runs": {
+            "default": 0,
+            "title": "Terminal Runs",
+            "type": "integer"
+          },
+          "to_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "To At"
+          },
+          "tool_spans_succeeded": {
+            "default": 0,
+            "title": "Tool Spans Succeeded",
+            "type": "integer"
+          },
+          "tool_spans_total": {
+            "default": 0,
+            "title": "Tool Spans Total",
+            "type": "integer"
+          },
+          "tool_success_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Tool Success Rate"
+          },
+          "total_cost_usd": {
+            "default": 0.0,
+            "title": "Total Cost Usd",
+            "type": "number"
+          },
+          "total_runs": {
+            "default": 0,
+            "title": "Total Runs",
+            "type": "integer"
+          },
+          "total_tokens": {
+            "default": 0,
+            "title": "Total Tokens",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "generated_at"
+        ],
+        "title": "StatsOverview",
         "type": "object"
       },
       "ToolCreate": {
@@ -4099,6 +4431,36 @@
           "created_at"
         ],
         "title": "TraceRead",
+        "type": "object"
+      },
+      "TraceTree": {
+        "description": "服务端建好的嵌套树（3.2.9 的 `/tree`）。",
+        "properties": {
+          "node_count": {
+            "default": 0,
+            "title": "Node Count",
+            "type": "integer"
+          },
+          "roots": {
+            "items": {
+              "$ref": "#/components/schemas/SpanNode"
+            },
+            "title": "Roots",
+            "type": "array"
+          },
+          "trace": {
+            "$ref": "#/components/schemas/TraceRead"
+          },
+          "truncated": {
+            "default": false,
+            "title": "Truncated",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "trace"
+        ],
+        "title": "TraceTree",
         "type": "object"
       },
       "ValidationError": {
@@ -6434,6 +6796,90 @@
         ]
       }
     },
+    "/api/v1/stats/overview": {
+      "get": {
+        "description": "3.2.9 的基础指标；`from` / `to` 与 `GET /traces` 同口径（闭区间，naive UTC 落库）。\n\n`kind`（`chat` / `workflow` / `eval`）是本次实现补的可选收窄项 —— 评测用例也落 `runs`，\n不过滤时\"成功率\"会把评测批次算进来（见 7.8）；不外传时统计全部来源。",
+        "operationId": "get_overview_api_v1_stats_overview_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "from",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "From"
+            }
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "To"
+            }
+          },
+          {
+            "in": "query",
+            "name": "kind",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Kind"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_StatsOverview_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "基础指标（成功率 / 时延 / 工具调用 / token / 成本）",
+        "tags": [
+          "stats"
+        ]
+      }
+    },
     "/api/v1/tool-invocations": {
       "get": {
         "description": "2.5：Trace 之外仍可 SQL 查询的审计行；最新在前。",
@@ -6945,6 +7391,7 @@
     },
     "/api/v1/traces/{trace_id}": {
       "get": {
+        "description": "3.2.9 的扁平 span 列表；`limit` / `cursor` 是 7.8 任务 6 的 spans 分页（游标即 `seq`）。",
         "operationId": "get_trace_api_v1_traces__trace_id__get",
         "parameters": [
           {
@@ -6954,6 +7401,34 @@
             "schema": {
               "title": "Trace Id",
               "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "default": 200,
+              "maximum": 500,
+              "minimum": 1,
+              "title": "Limit",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Cursor"
             }
           }
         ],
@@ -6979,7 +7454,50 @@
             "description": "Validation Error"
           }
         },
-        "summary": "Trace 概要 + 扁平 span 列表",
+        "summary": "Trace 概要 + 扁平 span 列表（键集分页）",
+        "tags": [
+          "traces"
+        ]
+      }
+    },
+    "/api/v1/traces/{trace_id}/tree": {
+      "get": {
+        "description": "`run → agent / workflow → llm / tool / retriever` 的嵌套结构（4.8.1）。\n\n树**不参与分页**：最多返回 `trace_service.SPAN_TREE_MAX_NODES` 个节点，超出或数据里有不可达\nspan 时 `truncated=true`（前端据此提示\"仅显示前 N 个节点 + 用扁平接口翻页\"）。",
+        "operationId": "get_trace_tree_api_v1_traces__trace_id__tree_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "trace_id",
+            "required": true,
+            "schema": {
+              "title": "Trace Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_TraceTree_"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Trace 嵌套树（服务端建树，3.2.9 / 7.8 任务 6）",
         "tags": [
           "traces"
         ]

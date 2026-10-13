@@ -1,7 +1,8 @@
 """/api/v1 路由汇总（详细设计 1.1 / 3.2）。
 
 随 Phase 增长：`agents.py` / `model_providers.py` / `conversations.py` / `chat.py` / `runs.py` /
-`traces.py`（Phase 1）、`tools.py`（Phase 2）、`workflows.py` + `runs.workflow_router`（Phase 3）…
+`traces.py`（Phase 1）、`tools.py`（Phase 2）、`workflows.py` + `runs.workflow_router`（Phase 3）、
+`knowledge_bases.py`（Phase 5）、`stats.py`（Phase 7）。
 Backlog 能力（审批 / MCP / 评测台 / 记忆）**不注册路由**（SD-14②）。
 """
 
@@ -17,6 +18,7 @@ from app.api.v1 import (
     knowledge_bases,
     model_providers,
     runs,
+    stats,
     tools,
     traces,
     workflows,
@@ -35,5 +37,6 @@ api_router.include_router(tools.router)
 api_router.include_router(workflows.router)
 api_router.include_router(knowledge_bases.router)
 api_router.include_router(knowledge_bases.maintenance_router)
+api_router.include_router(stats.router)
 
 __all__ = ["api_router"]

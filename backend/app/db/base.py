@@ -29,6 +29,15 @@ def now_utc() -> datetime:
     return datetime.now(UTC).replace(tzinfo=None)
 
 
+def to_naive_utc(value: datetime) -> datetime:
+    """aware 时间 → naive UTC（SQLite 存 naive，0.2.1）。
+
+    查询里需要拿"接口传进来的 aware 时间"去比"库里的 naive 列"时统一走这里
+    （`/traces?from=` 与 `/stats/overview?from=` 是同一口径）。naive 值原样返回。
+    """
+    return value.astimezone(UTC).replace(tzinfo=None) if value.tzinfo else value
+
+
 class Base(DeclarativeBase):
     """所有 ORM 模型的基类。"""
 

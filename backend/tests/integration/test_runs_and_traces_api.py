@@ -117,3 +117,52 @@ async def test_trace_list_is_keyset_paginated(
     assert len(second_body["data"]) == 1
     assert second_body["data"][0]["id"] != first_body["data"][0]["id"]
     assert second_body["meta"]["next_cursor"] is None
+
+
+@pytest.mark.asyncio
+async def test_trace_tree_nests_run_agent_llm(app_client: AsyncClient, finished_run: dict) -> None:
+    """7.8 任务 6：服务端建树返回 `run → agent → llm`（4.8.1 的层级）。"""
+    response = await app_client.get(f"/api/v1/traces/{finished_run['trace_id']}/tree")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["data"]["trace"]["id"] == finished_run["trace_id"]
+    assert body["data"]["node_count"] == 3
+    assert body["data"]["truncated"] is False
+    assert body["meta"]["total"] == 3
+
+    roots = body["data"]["roots"]
+    assert len(roots) == 1  # 唯一根：run span
+    root = roots[0]
+    assert root["span_type"] == "run"
+    assert root["children"][0]["span_type"] == "agent"
+    assert [child["span_type"] for child in root["children"][0]["children"]] == ["llm"]
+    assert root["children"][0]["children"][0]["children"] == []
+    # 树节点复用扁平 span 的形状（不含 input/output，3.2.9）
+    assert "input" not in root["children"][0]["children"][0]
+
+
+@pytest.mark.asyncio
+async def test_trace_tree_unknown_id_returns_404(app_client: AsyncClient) -> None:
+    response = await app_client.get("/api/v1/traces/ffffffffffffffffffffffffffffffff/tree")
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "NOT_FOUND"
+
+
+@pytest.mark.asyncio
+async def test_trace_spans_are_keyset_paginated(app_client: AsyncClient, finished_run: dict) -> None:
+    """7.8 任务 6 的 `spans` 分页：游标即上一页最后一个 `seq`。"""
+    trace_url = f"/api/v1/traces/{finished_run['trace_id']}"
+    first = await app_client.get(trace_url, params={"limit": 2})
+    first_body = first.json()
+    assert [span["seq"] for span in first_body["data"]["spans"]] == [1, 2]
+    assert first_body["meta"]["total"] == 2
+    assert first_body["meta"]["next_cursor"] == "2"
+
+    second = await app_client.get(trace_url, params={"limit": 2, "cursor": first_body["meta"]["next_cursor"]})
+    second_body = second.json()
+    assert [span["seq"] for span in second_body["data"]["spans"]] == [3]
+    assert second_body["meta"]["next_cursor"] is None
+
+    invalid = await app_client.get(trace_url, params={"cursor": "not-a-seq"})
+    assert invalid.status_code == 422
+    assert invalid.json()["error"]["code"] == "VALIDATION_ERROR"
