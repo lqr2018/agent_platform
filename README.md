@@ -46,7 +46,11 @@ PostgreSQL / 第二套向量库。
 
 ## 2. 30 秒快速开始
 
-### 2.1 容器方式（一条命令起全部）
+### 2.1 容器方式（**可选**：一条命令起全部）
+
+> **口径**：容器是**可选的交付形态**，本项目环境**未安装 Docker**，所以这条路径**从未 `up` 过**（CI 的第 3 个 job 只做 `docker compose build`）。
+> 要**已实测**的起法，请直接用 §8.1 的本机路径（`.\scripts\dev.ps1`，后端 8000 + 前端 5173 两个窗口）。
+> 需要模型 Key 时把 `.env.example` 拷成 `docker/.env`（compose 的插值源 + 经 `env_file` 注入 api 容器；需 `docker compose` ≥ 2.24）。
 
 ```bash
 docker compose -f docker/docker-compose.yml up --build   # 前端 http://localhost:8080，api http://localhost:8000/docs
@@ -60,7 +64,8 @@ docker compose -f docker/docker-compose.yml up --build   # 前端 http://localho
 平台**不内置任何模型 Key**，两种方式任选：
 
 - 环境变量：把 [`.env.example`](.env.example) 拷成 `.env`（容器方式放 `docker/.env`），填
-  `OPENAI_BASE_URL` / `OPENAI_API_KEY` / `DEFAULT_MODEL`；
+  `LLM_DEFAULT_BASE_URL` / `LLM_DEFAULT_API_KEY`（**没有** `DEFAULT_MODEL` 这类环境变量 —— 默认模型在 `/models`
+  建 Provider 时填，或用 `demo.ps1 -Model` 指定）；
 - UI：打开 `/models` 新建 Provider（`api_key` 用 Fernet 加密落库、列表掩码显示），点「测试」确认连通。
 
 ### 2.3 装载三个 Demo Agent
@@ -77,9 +82,13 @@ docker compose -f docker/docker-compose.yml up --build   # 前端 http://localho
 docker compose -f docker/docker-compose.yml exec api python -m app.scripts.seed_demo --docs
 ```
 
-装载**幂等**（按 `name` upsert，`--reset` 先删同名再建）；Demo 数据只有 `seed_demo` 这一条通道（理由见 §5.4）。
+装载**幂等**（按 `name` upsert，`--reset` 先删同名再建）；Demo 数据只有 `seed_demo` 这一条通道
+（**没有** `0009_phase8_demo_agents` 迁移 —— 理由见《详细设计》8.1 的口径修正与附录 F v1.21）。
 
-### 2.4 打开 8080，走 0.5.5 的 8 步
+### 2.4 打开界面，走 0.5.5 的 8 步（本机 5173 / 容器 8080）
+
+> **走查记录**：**本机路径已实测** —— 后端脚本 S1–S8 **31/31**、前端 F1–F3 **5/5**（《详细设计》附录 F v1.24）；
+> **容器路径未实测**（本机无 Docker），所以 7.9 DoD 第 4 条保持未勾 —— 别把下面 8 步当成"容器里验证过"。
 
 | 步 | 去哪 | 做什么 |
 |---|---|---|
@@ -90,9 +99,9 @@ docker compose -f docker/docker-compose.yml exec api python -m app.scripts.seed_
 | 5 | `/workflows` | 打开 research-flow 看只读图 → 运行 → 节点逐个变绿（`node_runs`） |
 | 6 | `/chat` | 选 Knowledge Assistant，问「我们产品的部署方式有哪些？」→ 答案带 `[1]` 引用与来源卡片 |
 | 7 | 终端 | `evaluate.py --suite demo-suite --agent research-agent` → 报告落在 `backend/data/reports/` |
-| 8 | 本文 | 架构（§3）+ 评测结果（§6）+ 已知限制与再评估触发条件（§8） |
+| 8 | 本文 | 架构（§3）+ 评测结果（§7）+ 已知限制与再评估触发条件（§9） |
 
-本机（不用容器）的起法与质量门禁见 §7.1；一键脚本是 `.\scripts\dev.ps1`。
+本机（不用容器）的起法与质量门禁见 §8.1；一键脚本是 `.\scripts\dev.ps1`。
 
 ---
 
@@ -197,7 +206,7 @@ Chat 内联 Workflow 时同一条 SSE 里出现 `workflow.node.started/completed
 - **配置方式**：`configs/eval/{contract-suite,demo-suite}.yaml`（YAML 是用例源，SD-18）；
   断言类型 7 种（`contains` / `regex` / `equals` / `json_path` / `tool_sequence` / `max_latency` / `llm_judge`）。
 - **复现**：`python -m app.scripts.evaluate --suite demo-suite --agent research-agent`；
-  报告落 `backend/data/reports/eval-*.md|json`，失败用例带 `trace_id` 可直接跳 `/traces`（§6）。
+  报告落 `backend/data/reports/eval-*.md|json`，失败用例带 `trace_id` 可直接跳 `/traces`（§4.5）。
 
 ---
 
@@ -205,6 +214,10 @@ Chat 内联 Workflow 时同一条 SSE 里出现 `workflow.node.started/completed
 
 > 对应《详细设计》附录 D 的"路线图与完成度"一节；这里把它放在能力清单之后（附录 D 排在 §9），内容不变。
 > 三个 Demo 的细节见 §6，评测结果见 §7。
+> **快照口径**：下面各阶段的「验证情况」是该阶段收口时的实测快照（数字 / 文件数 / 构建产物名都不随 HEAD 滚动）；
+> **当前值看 Phase 8 块**（它按 v1.24 复跑更新过）。
+> **容器路径（`docker compose up`）是可选形态且未实测**：本机与 CI 都不跑 `up`（CI 只有 `docker compose build`），
+> README 里**已实测**的起法只有 §8.1 的本机路径 —— 见 §2.1 的口径说明。
 
 **已完成：Phase 0 项目基础设施 + Phase 1 最小 Agent Runtime + Phase 2 Tool Calling + Phase 3 Workflow + Phase 5 RAG（后端 + 前端）+ Phase 7 的评测脚本链路与指标 / Trace 树接口 + Phase 8 MVP 收口（三个 Demo Agent + `seed_demo` / `demo.ps1` + README + `/stats` 看板）**（对齐《详细设计》7.1 / 7.2 / 7.3 / 7.4 / 7.6 / 7.8 / 7.9）
 
@@ -216,7 +229,7 @@ Phase 0（基础设施）：
 - [x] `db/base.py`（`TimestampMixin` / `ULIDStr` / `JSONDict`）+ async engine + `get_session`
 - [x] Alembic（`render_as_batch=True`）+ `upgrade head` / `downgrade base` 往返（含 SQLite batch 模式验证测试）
 - [x] `/healthz`、`/readyz`、`/api/v1/meta`
-- [x] `docker-compose.yml` + `nginx.conf`、`scripts/{dev,migrate}.ps1`、`.github/workflows/ci.yml`
+- [x] `docker-compose.yml` + `nginx.conf`、`scripts/{dev,migrate}.ps1`、`.github/workflows/ci.yml`（容器为**可选**形态：CI 只验证镜像可构建，`up` 未实测 —— 见 §2.1）
 
 Phase 1（最小 Agent Runtime）：
 
@@ -282,7 +295,7 @@ Phase 7（评测脚本链路 + 指标看板 + 服务端 Trace 树；**未做项�
 - [x] 文档：`docs/diagrams/phase-7-eval.md`（附录 F 规则 3）+ 附录 F v1.19 / v1.20 + 7.8 DoD 勾选（**1–4 条**；第 5 条 Evaluation 页面属迭代 D）
 - [ ] **未做（不假装完成）**：`/stats` 看板（并入 Phase 8 的前端收口）；`eval_*` 四张表、`DbSuiteSource`、`eval_api.py`、Evaluation 页面与历史对比属**迭代 D**；`llm_judge` 只挂在 `demo-suite` 的手工路径上，**从未对真实模型跑过**
 
-Phase 8（MVP 收口：三个 Demo Agent + 装载脚本 + README/架构图 + `/stats` 看板；落点与偏差见《详细设计》附录 F v1.21，装载脚本的稳健性加固见 v1.22）：
+Phase 8（MVP 收口：三个 Demo Agent + 装载脚本 + README/架构图 + `/stats` 看板；落点与偏差见《详细设计》附录 F v1.21，装载脚本的稳健性加固见 v1.22，前端测试补齐见 v1.23）：
 
 - [x] 三个 Demo 的配置：`configs/agents/{research-agent,data-analysis-agent,knowledge-assistant}.yaml`（`AgentConfigFile` 强校验）+ 可选图 `configs/workflows/research-flow.yaml`；`research-flow` / `kb-qa-flow` 的入参键统一为 `input`
 - [x] `python -m app.scripts.seed_demo`：工具对齐 → Provider 解析（**每个 Agent 用自己 YAML 里的 `model.provider`**，`--provider` 传了才统一覆盖）→ KB（按 `name` 建或复用）→ Agent 第一遍 → Workflow 名 → id 解析并发布 → Agent 第二遍回填 `workflow_id` → `--docs` 灌语料；`--reset` **硬删**同名 Agent / Workflow（SQLite 没开 FK 级联，脚本逐表显式删 —— 不留悬空行；配置外的别人的 Run / 绑定只**置空指针**，不删行），退出码 `2` = 环境 / 配置问题（库未迁移、配置写错或重名、provider / tool 名字写错、embedding 不可用，报错带文件名而不是裸 traceback）（**没有 `0009` 迁移**：数据模型变更 = 无，Demo 是内容不是 schema）
@@ -291,15 +304,16 @@ Phase 8（MVP 收口：三个 Demo Agent + 装载脚本 + README/架构图 + `/s
 - [x] `/stats` 看板（`src/api/stats.ts` + 重写的 `pages/DashboardPage.tsx`）：六项指标 + 窗口 / `kind` 选择器，空窗口显示 `-` 而不是 `0`，**只做数字不做图表**（SD-14）
 - [x] 链路与评测证据：`tests/e2e/test_demo_agents.py`（三条链路）、`tests/integration/test_seed_demo.py`、`tests/unit/test_demo_genericity.py`、`tests/unit/test_agent_configs.py`；`configs/eval/demo-suite.yaml` 去掉不存在的 `kb_search` 断言
 - [x] 文档：README 按**附录 D 大纲**重写（§1–§10）+ `docs/diagrams/architecture.md`（分层 / 16 张表 / 一次会话 SSE）+ `docs/diagrams/phase-8-demo.md`（三条链路、装载顺序、8.5 验收落地）
-- [ ] **未做（不假装完成）**：`docker compose up --build` 的 10 分钟端到端走查（本机无 Docker，CI 只做镜像构建）；`demo-suite` 的真实模型路径与 `llm_judge` 实测（需自备 Key）；§9 的迭代 A–E 内容
+- [x] **容器侧的"能构建"**：CI 的第 3 个 job 跑 `docker compose -f docker/docker-compose.yml build`（`api` + `frontend` 两个镜像）；`8aa82e6`（当前 `main` 的 HEAD）那次 workflow `ci` 的三个 job 全绿（徽章 = passing，`docker` job 约 2m18s，维护者从 Actions 页复核，本机无 Docker 故不复跑）—— 证据是 `.github/workflows/ci.yml` 的 `docker` job
+- [ ] **未做（不假装完成）**：`docker compose up` + 0.5.5 八步的 **10 分钟端到端走查**（本机无 Docker，CI 只 `build` 不 `up`）→ 《详细设计》7.9 DoD 第 4 条因此保持未勾；`demo-suite` 的真实模型路径与 `llm_judge` 实测（需自备 Key）；§9 的迭代 A–E 内容
 
-**验证情况（Phase 5 后端）**：`pytest` 全量通过（unit + 19 个 integration 文件）、`ruff check` / `ruff format --check` / `mypy app` 0 告警、`alembic check` 干净（head = `0005_phase5_knowledge_tables`）、`python -m app.scripts.check_readyz` 通过、`export_openapi` 幂等（`frontend/src/types/api.d.ts` 已随之重导）。知识库端到端在 `tests/integration/test_knowledge_api.py`：上传 → `ready` → 命中（带 `source`）→ 删除后不再命中、同 checksum 不重复 embed（断言 embedding 调用次数）、`verify-index` 两端计数一致、Chat 预检索的事件 10 与 `<chunk>` 注入（含未命中与未绑 KB 两个分支）、Workflow `retriever` 节点的命中与 `KB_NOT_FOUND` 分支。
+**验证情况（Phase 5 后端，当时值）**：`pytest` 全量通过（当时 unit + 19 个 integration 文件；截至 Phase 8 为 unit 47 / integration 22 个文件）、`ruff check` / `ruff format --check` / `mypy app` 0 告警、`alembic check` 干净（head = `0005_phase5_knowledge_tables`）、`python -m app.scripts.check_readyz` 通过、`export_openapi` 幂等（`frontend/src/types/api.d.ts` 已随之重导）。知识库端到端在 `tests/integration/test_knowledge_api.py`：上传 → `ready` → 命中（带 `source`）→ 删除后不再命中、同 checksum 不重复 embed（断言 embedding 调用次数）、`verify-index` 两端计数一致、Chat 预检索的事件 10 与 `<chunk>` 注入（含未命中与未绑 KB 两个分支）、Workflow `retriever` 节点的命中与 `KB_NOT_FOUND` 分支。
 
-**验证情况（Phase 5 前端）**：`npm run lint`（eslint 0 告警）/ `prettier --check` / `tsc --noEmit` / `vitest`（**47 项**，10 个文件）/ `vite build`（3077 modules，`dist/assets/index-*.js` 1.35 MB，gzip 424 kB）全绿。新增用例：`src/api/__tests__/kb.test.ts`（12 个端点的 URL / 方法 / body，特别钉住 multipart **不手写** `Content-Type`、`/query` 的多库 `kb_ids`、`verify-index` 走 `/maintenance`）、`src/components/chat/CitationCard.test.tsx`（未命中 / 明细在拉 / 明细已到 / 拉取失败四态）、`src/pages/__tests__/KnowledgePage.test.tsx`（列表口径与空态）、`src/stores/chatStore.test.ts` 的事件 10 三条（骨架与补拉、未命中即终结、无检索轮次不清空）。前端落点见《详细设计》附录 F v1.18（含"事件 10 只带计数、切片正文按需补拉"的口径）。
+**验证情况（Phase 5 前端，当时值；当时 vitest 47 项 / 10 个文件，现为 62 / 13）**：`npm run lint`（eslint 0 告警）/ `prettier --check` / `tsc --noEmit` / `vitest`（**47 项**，10 个文件）/ `vite build`（3077 modules，`dist/assets/index-*.js` 1.35 MB，gzip 424 kB）全绿。新增用例：`src/api/__tests__/kb.test.ts`（12 个端点的 URL / 方法 / body，特别钉住 multipart **不手写** `Content-Type`、`/query` 的多库 `kb_ids`、`verify-index` 走 `/maintenance`）、`src/components/chat/CitationCard.test.tsx`（未命中 / 明细在拉 / 明细已到 / 拉取失败四态）、`src/pages/__tests__/KnowledgePage.test.tsx`（列表口径与空态）、`src/stores/chatStore.test.ts` 的事件 10 三条（骨架与补拉、未命中即终结、无检索轮次不清空）。前端落点见《详细设计》附录 F v1.18（含"事件 10 只带计数、切片正文按需补拉"的口径）。
 
-**验证情况（Phase 7：评测脚本链路 + 指标 / Trace 树）**：`pytest` **629 项**（625 passed + 4 skipped）、覆盖率 **89.89%**（`TOTAL 9462 957 90%`，门槛 `--cov-fail-under=70`）、`ruff check` / `ruff format --check .`（198 files）/ `mypy app`（124 source files）0 告警、`alembic check` 干净（`No new upgrade operations detected`；本阶段**无新增表**）、`python -m app.scripts.check_readyz` 通过（`ok=True revision 0005_phase5_knowledge_tables`）、`export_openapi` / `gen:api` 重导后与提交版本一致（`docs/openapi.json` **41 → 43 paths**，已随本轮提交）。新增用例 65 项（52 + 本轮 13）：`tests/unit/test_eval_assertions.py`（20）/ `test_eval_runner.py`（15）/ `test_eval_metrics.py`（8）/ `test_eval_judges.py`（5）+ `tests/integration/test_eval_contract_suite.py`（4）。契约套件的端到端证据（`test_eval_contract_suite.py`，真实 `create_app()` + lifespan + `FakeLLMProvider` + 内存向量库）：`configs/eval/contract-suite.yaml` 的 5 条启用用例全 `passed`（`task_success_rate=1.0`、`tool_success_rate=0.75`、`workflow_success_rate=null`、`avg_tool_calls=0.8`），5 条 `runs.kind=eval` 全 `succeeded` 且各自独立会话，4 行 `tool_invocations` 中 `task-4-tool-error-backfill` 那行 `failed` / `TOOL_EXECUTION_FAILED`（证明"工具失败回填给模型、Run 仍成功"），每个 Run 恰好 1 个 `retriever` span（`strategy=prefetch`、`hit_count>=1`、`output.chunk_ids` 非空 —— 预检索真的进了 system）；CLI 侧（真子进程跑 `python -m app.scripts.evaluate`）钉住 `--json` 只打 JSON、stdout 与落盘 `.json` 同源、失败用例退出码 = `failed + errors` 且带 `trace_id`、`--cases` 指定 `enabled: false` 的占位用例 → `CONFIG_INVALID` + 退出码 `2` 且不落半份报告。本轮（v1.20）的指标与 Trace 树侧：`tests/integration/test_stats_api.py`（4 项）钉住"真实 chat Run 的六项指标"（`FakeLLMProvider` 的 `cost_usd=0` 也照实断言，不假装有成本）与"造行后 `success_rate=0.5` / `error_rate=0.5` / 均值只算收敛行 / `tool_success_rate=0.5`"，空窗口返回 `null` 而不是 `0.0`，`?kind=` 可把评测批次排除；`tests/unit/test_trace_tree.py`（6 项）钉住建树的五条边界（孤儿 / 自环当根、兄弟按 `seq`、环丢弃、上限截断、1000 深链不撞递归上限）；`test_runs_and_traces_api.py`（+3 项）钉住 `run → agent → llm` 三层嵌套、未知 `trace_id` 的 404、spans 键集分页（`limit=2` → `next_cursor="2"` → 末页 `next_cursor=null`）与非法游标 422。
+**验证情况（Phase 7：评测脚本链路 + 指标 / Trace 树，当时值）**：`pytest` **629 项**（625 passed + 4 skipped）、覆盖率 **89.89%**（`TOTAL 9462 957 90%`，门槛 `--cov-fail-under=70`）、`ruff check` / `ruff format --check .`（198 files）/ `mypy app`（124 source files）0 告警、`alembic check` 干净（`No new upgrade operations detected`；本阶段**无新增表**）、`python -m app.scripts.check_readyz` 通过（`ok=True revision 0005_phase5_knowledge_tables`）、`export_openapi` / `gen:api` 重导后与提交版本一致（`docs/openapi.json` **41 → 43 paths**，已随本轮提交）。新增用例 65 项（52 + 本轮 13）：`tests/unit/test_eval_assertions.py`（20）/ `test_eval_runner.py`（15）/ `test_eval_metrics.py`（8）/ `test_eval_judges.py`（5）+ `tests/integration/test_eval_contract_suite.py`（4）。契约套件的端到端证据（`test_eval_contract_suite.py`，真实 `create_app()` + lifespan + `FakeLLMProvider` + 内存向量库）：`configs/eval/contract-suite.yaml` 的 5 条启用用例全 `passed`（`task_success_rate=1.0`、`tool_success_rate=0.75`、`workflow_success_rate=null`、`avg_tool_calls=0.8`），5 条 `runs.kind=eval` 全 `succeeded` 且各自独立会话，4 行 `tool_invocations` 中 `task-4-tool-error-backfill` 那行 `failed` / `TOOL_EXECUTION_FAILED`（证明"工具失败回填给模型、Run 仍成功"），每个 Run 恰好 1 个 `retriever` span（`strategy=prefetch`、`hit_count>=1`、`output.chunk_ids` 非空 —— 预检索真的进了 system）；CLI 侧（真子进程跑 `python -m app.scripts.evaluate`）钉住 `--json` 只打 JSON、stdout 与落盘 `.json` 同源、失败用例退出码 = `failed + errors` 且带 `trace_id`、`--cases` 指定 `enabled: false` 的占位用例 → `CONFIG_INVALID` + 退出码 `2` 且不落半份报告。本轮（v1.20）的指标与 Trace 树侧：`tests/integration/test_stats_api.py`（4 项）钉住"真实 chat Run 的六项指标"（`FakeLLMProvider` 的 `cost_usd=0` 也照实断言，不假装有成本）与"造行后 `success_rate=0.5` / `error_rate=0.5` / 均值只算收敛行 / `tool_success_rate=0.5`"，空窗口返回 `null` 而不是 `0.0`，`?kind=` 可把评测批次排除；`tests/unit/test_trace_tree.py`（6 项）钉住建树的五条边界（孤儿 / 自环当根、兄弟按 `seq`、环丢弃、上限截断、1000 深链不撞递归上限）；`test_runs_and_traces_api.py`（+3 项）钉住 `run → agent → llm` 三层嵌套、未知 `trace_id` 的 404、spans 键集分页（`limit=2` → `next_cursor="2"` → 末页 `next_cursor=null`）与非法游标 422。
 
-**验证情况（Phase 8：MVP 收口）**：后端 `pytest` **658 项**（`654 passed, 4 skipped in 163.65s`，`addopts` 带 `-m "not live"`）、覆盖率 **90.03%**（`TOTAL 9581 955 90%`，门槛 `--cov-fail-under=70`）、`ruff check app tests configs` → `All checks passed!`、`ruff format --check .`（206 files）/ `mypy app`（126 source files）0 告警、`alembic check` → `No new upgrade operations detected`（本阶段**无新增表**）、`python -m app.scripts.check_readyz` → `ok=True revision 0005_phase5_knowledge_tables`；前端 `eslint` / `prettier --check` / `tsc --noEmit` 0 告警、`vitest` **49 项（11 个文件）**全绿、`vite build` 成功（7.23s，`dist/assets/index-*.js` 1,361.56 kB / gzip 426.83 kB）、`npm run gen:api` 后 `git diff --exit-code src/types/api.d.ts` **无 diff**（OpenAPI 与前端类型一致，CI 的 `gen-api` 门禁）。本轮新增后端 21 项：`tests/e2e/test_demo_agents.py`（3：Chat 内联 Workflow / 工具循环 / 预检索 + 引用）、`tests/integration/test_seed_demo.py`（**15**：幂等装载、`--reset`、`--docs` 摄取、`name → id` 解析、配置错误退出码、坏配置文件带文件名、同名配置、per-Agent Provider、`--reset` 无悬空引用）、`tests/unit/test_agent_configs.py`（9：YAML → `AgentCreate` 映射）、`tests/unit/test_demo_genericity.py`（2：AST 扫描 + 反向自检）；前端新增 2 项（`DashboardPage.test.tsx`：六项指标渲染、空窗口显示 `-`）。三条链路的断言落点见 §6.4；`seed_demo` 的稳健性加固（配置错误收口 / Provider 按 Agent 解析 / `--reset` 不留悬空行）见《详细设计》附录 F v1.22。
+**验证情况（Phase 8：MVP 收口，当前值 —— 按 v1.24 复跑更新）**：后端 `pytest` **659 项**（`655 passed, 4 skipped`，`addopts` 带 `-m "not live"`）、覆盖率 **90.07%**（`TOTAL 9582 951 90%`，门槛 `--cov-fail-under=70`）、`ruff check app tests configs` → `All checks passed!`、`ruff format --check .`（206 files）/ `mypy app`（126 source files）0 告警、`alembic check` → `No new upgrade operations detected`（本阶段**无新增表**）、`python -m app.scripts.check_readyz` → `ok=True revision 0005_phase5_knowledge_tables`；前端 `eslint` / `prettier --check` / `tsc --noEmit` 0 告警、`vitest` **62 项（13 个文件）**全绿、`vite build` 成功（6.36s，3078 modules，`dist/assets/index-QyoDinEb.js` 1,361.62 kB / gzip 426.85 kB）、`npm run gen:api` 后 `git diff --exit-code src/types/api.d.ts` **无 diff**（OpenAPI 与前端类型一致，CI 的 `gen-api` 门禁）。本轮新增后端 29 项（3 + 15 + 9 + 2）：`tests/e2e/test_demo_agents.py`（3：Chat 内联 Workflow / 工具循环 / 预检索 + 引用）、`tests/integration/test_seed_demo.py`（**15**：幂等装载、`--reset`、`--docs` 摄取、`name → id` 解析、配置错误退出码、坏配置文件带文件名、同名配置、per-Agent Provider、`--reset` 无悬空引用）、`tests/unit/test_agent_configs.py`（9：YAML → `AgentCreate` 映射）、`tests/unit/test_demo_genericity.py`（2：AST 扫描 + 反向自检）；前端新增 2 项（`DashboardPage.test.tsx`：六项指标渲染、空窗口显示 `-`），**本轮 v1.23 再补 13 项**，把 7.9「测试要求」点名的三个组件测试备齐：`src/hooks/useChatStream.test.ts`（8：事件分发 / `reset` / 权威 `content` / `run.failed` / HTTP 500 / `TypeError` / 并发闸门 / `stop()`）、`src/components/chat/MessageBubble.test.tsx`（5：角色标签与底色 / 元信息且缺省不留占位 / 流式光标 / `pre-wrap`），`TraceTree` 建树的 3 项 Phase 7 已有。三条链路的断言落点见 §6.4；`seed_demo` 的稳健性加固（配置错误收口 / Provider 按 Agent 解析 / `--reset` 不留悬空行）见《详细设计》附录 F v1.22；前端测试补齐与由此发现的「点停止被当失败」修复见附录 F v1.23；本轮（v1.24）的干净环境复核、流式错误体读取修复与新增用例见附录 F v1.24（同批还按复核结果订正了 §2.2 的环境变量名与本节数字口径）。
 
 **验证情况（Phase 0–3，基线）**：后端 `pytest` **509 项**（506 passed + 3 skipped）、覆盖率 **91%**（`TOTAL 6994 631 91%`）、`ruff check` / `ruff format --check` 0 告警、`mypy app` 通过、`alembic` 往返 + `alembic check`（`No new upgrade operations detected`）、就绪探针 `python -m app.scripts.check_readyz` 通过（`ok=True revision 0004_phase3_workflow_tables`）、`export_openapi` 幂等（连续两次同哈希）；前端 `eslint` / `prettier` / `tsc` / `vitest`（**28 项**）/ `vite build` 全绿。Phase 1/2 的回归用例全绿（无 Workflow 的 Agent 与 Chat 行为不变）；Phase 3 的端到端链路（真实 `create_app()` + lifespan + SQLite：建图 → 发布 → 202 运行 → 轮询 `node-runs` → resume/cancel/内联 Chat 流）见 `tests/integration/test_workflow_runner.py`。说明：`app/services/**` 与 `app/api/**` 的行覆盖率在本机 coverage 下会漏记"`await` 之后的尾行"（《详细设计》7.2 记录的口径），因此服务层另有直测补充（`tests/integration/test_workflow_runner.py` 直接断言落库结果与 `node_runs` 序列）。
 
@@ -354,7 +368,7 @@ Phase 8（MVP 收口：三个 Demo Agent + 装载脚本 + README/架构图 + `/s
 | 能力可组合 | 清空 Demo 1 的 `workflow` 字段 | 仍可对话（退回纯 Agent 循环），无需改代码 |
 | 工具可替换 | Demo 2 把 `python_execute` 换成只读工具 | 只改 YAML |
 | 契约测试 | `pytest tests/e2e/test_demo_agents.py` | 三个 Agent 各跑通一条链路（见下表） |
-| 评测覆盖 | `evaluate.py` 跑 contract + demo suite | `contract-suite` 成功率 = 100%（§7.1） |
+| 评测覆盖 | `evaluate.py` 跑 `contract-suite`（`demo-suite` 的真实模型路径见 §7.2 的说明） | `contract-suite` 成功率 = 100%（§7.1） |
 
 `tests/e2e/test_demo_agents.py` 的三条链路（真实 `create_app()` + lifespan + 临时 SQLite + `FakeLLMProvider`）：
 
@@ -453,8 +467,14 @@ cd ..\frontend; npm run gen:api
 
 ### 8.3 加一个 Provider / VectorStore / WorkflowEngine
 
-实现对应 `base.py` 协议 → 在 `registry.py` 按 `kind` 注册 → 加进 `tests/unit/contract/` 的参数化列表
-（契约测试是"换实现不改调用方"的保证）。注意 SD-10 / SD-11：**先有第二个真实调用方**再写第二套实现（R11 红线）。
+实现对应 `base.py` 协议 → 接到现有的选择点上（`LLMProvider`：`app/runtime/llm/registry.py` 的 `_factories`
+按 `kind` 注册；`VectorStore`：`app/runtime/rag/vectorstores.py::build_vector_store` 按设置选；
+`WorkflowEngine`：`app/runtime/workflow/simple_engine.py`）→ 补上契约测试
+（契约测试是"换实现不改调用方"的保证）。落点：`WorkflowEngine` 有参数化列表
+`tests/unit/workflow/test_engine_contract.py`（`ENGINE_FACTORIES`，加实现就往里加一项）；`LLMProvider` /
+`VectorStore` 目前是实现各一条（`tests/unit/test_llm_openai_compatible.py` / `test_llm_fake_provider.py` /
+`tests/unit/test_vectorstores.py`），加第三套实现时按 `ENGINE_FACTORIES` 的样式把共用断言参数化 —— 仓库里
+**没有** `tests/unit/contract/` 目录。注意 SD-10 / SD-11：**先有第二个真实调用方**再写第二套实现（R11 红线）。
 
 ### 8.4 加一个 API
 

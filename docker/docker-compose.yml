@@ -19,7 +19,12 @@ services:
       LOG_LEVEL: INFO
       ENABLE_DOCS: "true"
       # DATA_DIR / DATABASE_URL 保持 Settings 默认（./data 相对 /app），无需在此重复配置
-    # 需要给平台配模型 Key 时：把 ../.env 拷成 docker/.env（compose 会自动读取并与上面合并）
+    # 需要给平台配模型 Key 时：把 ../.env 拷成 docker/.env —— 它既是 compose 的插值源，
+    # 也经下面的 env_file 注入 api 容器（文件不存在时跳过，容器内照旧用 Settings 默认值；
+    # 等价且更省事的做法是起完服务后在 /models 页配 Provider）
+    env_file:
+      - path: .env          # 相对本 compose 文件；需 docker compose ≥ 2.24（required: false）
+        required: false
     volumes:
       # 6.1：SQLite + chroma + 文件沙箱 + 评测报告全在一个卷里 → 一处备份
       - ../backend/data:/app/data

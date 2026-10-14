@@ -140,7 +140,9 @@ cd backend
 
 ## 8. 未做（不假装完成）
 
-- `docker compose up --build` 的 10 分钟端到端走查：**本机没有 Docker**，CI 只做镜像构建
-  （`.github/workflows/ci.yml` 的第 3 个 job），因此 7.9 DoD 第 4 条保持未勾。
+- `docker compose up --build` 的 10 分钟端到端走查：**本机没有 Docker**，因此 7.9 DoD 第 4 条保持未勾 ——
+  该条**分两档记**：① **镜像构建 ✅**（`.github/workflows/ci.yml` 的第 3 个 job = `docker compose -f
+  docker/docker-compose.yml build`，出 `api` + `frontend` 两个镜像，`8aa82e6` 那次三个 job 全绿）；② **`up` + 8 步走查 ⏳ 未做**
+  （即本条 —— CI 只 `build` 不 `up`）。**v1.25 起容器记为「可选档」**：不再算本阶段的阻塞项（《详细设计》6.1 口径 + 附录 F v1.25）。
 - `demo-suite` 的 `llm_judge` 路径未对真实模型跑过（7.8 遗留，需自备 Provider Key）。
 - Memory / MCP / 审批 / 评测平台页面属迭代 A–D，本阶段**不建空页面**（SD-14②）。
