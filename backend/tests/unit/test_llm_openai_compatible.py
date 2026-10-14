@@ -8,7 +8,7 @@ usage 缺失时的估算、错误映射、参数白名单与错误映射。
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 
 import httpx
 import pytest
@@ -164,6 +164,30 @@ async def test_error_mapping(status: int, body: dict, expected: type[Exception])
     with pytest.raises(expected) as excinfo:
         await provider.chat([ChatMessage.user("hi")], model="m")
     assert getattr(excinfo.value, "details", {}).get("upstream_status") == status
+
+
+class _UnreadBody(httpx.AsyncByteStream):
+    """还原"错误体还没读"的时序：真实上游的流式响应不会像 MockTransport 那样预先读完 body。"""
+
+    def __init__(self, payload: bytes) -> None:
+        self._payload = payload
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        yield self._payload
+
+
+@pytest.mark.asyncio
+async def test_stream_error_body_is_read_before_mapping() -> None:
+    """LLM_STREAM 默认 true 时错误走流式分支：必须先读出错误体，才能按附录 A 映射。"""
+    body = json.dumps({"error": {"message": "invalid api key"}}).encode("utf-8")
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(401, headers={"content-type": "application/json"}, stream=_UnreadBody(body))
+
+    provider = _provider(handler, stream=True)
+    with pytest.raises(ModelAuthFailedError) as excinfo:
+        await provider.chat([ChatMessage.user("hi")], model="m")
+    assert excinfo.value.details.get("upstream_status") == 401
 
 
 @pytest.mark.asyncio

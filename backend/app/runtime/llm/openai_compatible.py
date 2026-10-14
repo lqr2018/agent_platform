@@ -433,8 +433,11 @@ class OpenAICompatibleProvider:
         """把上游状态码翻译成 `MODEL_*`（1.6 的映射规则 + 附录 A）。"""
         status = response.status_code
         try:
+            # 流式分支此时 body 还没读（`response.json()` 会先抛 `ResponseNotRead`）；
+            # 先把错误体读出来，4xx/5xx 才能按附录 A 映射，而不是漏成未捕获异常。
+            await response.aread()
             body = response.json()
-        except ValueError:
+        except (ValueError, httpx.HTTPError):
             body = {}
         message = _extract_error_message(body) or f"upstream returned HTTP {status}"
         details = {"provider": self.config.name, "upstream_status": status, "upstream_message": message}

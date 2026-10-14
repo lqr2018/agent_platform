@@ -76,8 +76,16 @@ export function useChatStream({ conversationId, onSettled }: UseChatStreamOption
         }
       } catch (error) {
         ok = false;
-        errorCode = error instanceof Error ? error.name : "UNKNOWN";
-        setState({ isStreaming: false, error: error instanceof Error ? error.message : "请求失败" });
+        if (controller.signal.aborted) {
+          // 用户点"停止"（3.4：只断开连接、不取消 Run）——这是**正常收尾**，不是错误：
+          // 不写 error 文案，否则页面会把 "The operation was aborted." 当失败提示红色显示。
+          // `ABORTED` 是前端本地码，与后端真取消时的 `RUN_CANCELED` 区分开。
+          errorCode = "ABORTED";
+          setState({ isStreaming: false, error: null });
+        } else {
+          errorCode = error instanceof Error ? error.name : "UNKNOWN";
+          setState({ isStreaming: false, error: error instanceof Error ? error.message : "请求失败" });
+        }
         onSettled?.({ content: answer, messageId, finishReason, ok, errorCode });
         abortRef.current = null;
         return;
