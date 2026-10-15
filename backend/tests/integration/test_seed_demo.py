@@ -12,7 +12,9 @@
    装载前被拒：报错带文件名，且库里不留半份数据（重名会静默覆盖，等于幂等键失效）；
 6. Provider 是**每个 Agent 各自**的：YAML 声明的 `model.provider` 各查各的，`provider_ref` 才统一覆盖；
 7. `--reset` 的硬删**不留悬空行**（SQLite 没开 FK 级联）：真跑工具链路 + Chat 内联 Workflow 造数据，
-   再让一个不在配置里的 Agent 也绑同一张图 —— 它的 Run 属于用户历史，只置空 `workflow_run_id`。
+   再让一个不在配置里的 Agent 也绑同一张图 —— 它的 Run 属于用户历史，只置空 `workflow_run_id`；
+8. `--fake-embedding`：Provider 只有 Chat 模型（DeepSeek 无 `/embeddings`）时，脚本能幂等地补一个
+   `kind=fake` 的 embedding Provider 供知识库使用，且闸门（`EMBED_ALLOW_FAKE`）没开就当面报错。
 """
 
 from __future__ import annotations
@@ -479,3 +481,59 @@ async def test_seed_reset_leaves_no_dangling_references(
     assert remaining == bystander_messages
     bystander_row = await session.get(Agent, str(bystander["id"]))
     assert bystander_row is not None and bystander_row.workflow_id is None
+
+
+@pytest.mark.asyncio
+async def test_fake_embedding_provider_is_created_then_reused(
+    session: AsyncSession,
+    provider: ModelProvider,
+) -> None:
+    """`--fake-embedding`：Provider 只有 Chat 模型（DeepSeek 无 `/embeddings`）也能建知识库。
+
+    覆盖 4.1.3 闸门放宽后的脚本入口：`EMBED_ALLOW_FAKE=true`（本模块 autouse fixture 已设）时
+    `kind=fake` 可由服务侧入口写入；KB 行里**照实**落 `fake-embedding`，连跑两次不重复建 Provider。
+    """
+    settings = get_settings()
+
+    fake, created = await seed_demo.ensure_fake_embedding_provider(session, settings)
+    assert created is True
+    assert (fake.name, fake.kind, fake.default_model) == (
+        seed_demo.FAKE_EMBEDDING_PROVIDER_NAME,
+        "fake",
+        seed_demo.FAKE_EMBEDDING_MODEL,
+    )
+
+    again, created_again = await seed_demo.ensure_fake_embedding_provider(session, settings)
+    assert created_again is False and again.id == fake.id
+    assert await session.scalar(select(func.count(ModelProvider.id))) == 2  # 只有 demo-provider + 它
+
+    report = await _seed(
+        session,
+        provider,
+        embedding_provider_ref=fake.name,
+        embedding_model=seed_demo.FAKE_EMBEDDING_MODEL,
+    )
+
+    assert report.knowledge_bases == ["created:product-docs"]
+    kb = (await session.execute(select(KnowledgeBase))).scalar_one()
+    assert kb.embedding_provider_id == fake.id
+    assert kb.embedding_model == seed_demo.FAKE_EMBEDDING_MODEL
+    # 打印里能看到这一步顺手建了什么（默认路径的 providers 为空，输出不变）
+    assert report.render().count("providers:") == 0
+
+
+@pytest.mark.asyncio
+async def test_fake_embedding_requires_allow_fake(
+    session: AsyncSession,
+    provider: ModelProvider,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """闸门没开就当面报错（退出码 2），不静默降级成"看起来能用的假 embedding"。"""
+    monkeypatch.setenv("EMBED_ALLOW_FAKE", "false")
+    get_settings.cache_clear()
+
+    with pytest.raises(ConfigInvalidError) as excinfo:
+        await seed_demo.ensure_fake_embedding_provider(session, get_settings())
+
+    assert excinfo.value.details["setting"] == "EMBED_ALLOW_FAKE"
+    assert await session.scalar(select(func.count(ModelProvider.id))) == 1  # 只留下 demo-provider

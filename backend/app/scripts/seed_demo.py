@@ -6,6 +6,7 @@
     python -m app.scripts.seed_demo --docs                # 再把 tests/fixtures/docs 灌进 KB
     python -m app.scripts.seed_demo --reset               # 先删同名 Agent（重放演示从干净状态开始）
     python -m app.scripts.seed_demo --provider my-provider --model qwen-plus
+    python -m app.scripts.seed_demo --fake-embedding      # Provider 只有 Chat 模型时（如 DeepSeek）用它建 KB
 
 装载顺序（引用必须先生成）：
 
@@ -29,6 +30,11 @@
 退出码：`0` = 全部就绪；`2` = 环境/配置问题（库未迁移、配置写错或重名、provider / tool 名字写错、
 embedding 不可用、演示语料目录不存在或摄取失败）。配置文件的解析 / 编码错误也走 `2`（带文件名），
 不再是一串裸 traceback。
+
+`--fake-embedding` 解决的是"Provider 只有 Chat 模型"这一现实（DeepSeek 官方只有 Chat 接口、无 embedding 模型，
+见 README §9 已知限制）：它按 name 幂等建一个 `kind=fake` 的 Provider（`fake-embedding`）专供知识库使用，
+KB 行里**照实**落 `embedding_model=fake-embedding`，不冒充真实模型。前提 `EMBED_ALLOW_FAKE=true`
+（4.1.3 的闸门，与测试里 `FakeEmbedder` 同一开关）。
 """
 
 from __future__ import annotations
@@ -70,6 +76,7 @@ from app.db.models import (
 from app.db.session import check_database, dispose_engine, get_sessionmaker
 from app.schemas.agent import AgentCreate, MemoryConfigDTO
 from app.schemas.knowledge import KnowledgeBaseCreate
+from app.schemas.llm import ModelEntry, ProviderCreate
 from app.schemas.workflow import WorkflowCreate
 from app.services import (
     agent_config,
@@ -101,6 +108,12 @@ DOC_POLL_SECONDS = 0.05
 DOC_TERMINAL_STATUSES = (str(DocumentStatus.READY), str(DocumentStatus.FAILED))
 """`documents.status` 的终态（4.6.2 的状态机；`missing` 由 `_wait_document` 的 `None` 分支覆盖）。"""
 
+FAKE_EMBEDDING_PROVIDER_NAME = "fake-embedding"
+"""`--fake-embedding` 建 / 复用的 Provider 名字（幂等键；`kind=fake`，4.1.3）。"""
+
+FAKE_EMBEDDING_MODEL = "fake-embedding"
+"""确定性 embedding 的模型名（`FakeEmbedder` 的默认名，KB 行里照实写，不冒充真实模型）。"""
+
 
 @dataclass
 class SeedReport:
@@ -110,6 +123,8 @@ class SeedReport:
     workflows: list[str] = field(default_factory=list)
     agents: list[str] = field(default_factory=list)
     documents: list[str] = field(default_factory=list)
+    providers: list[str] = field(default_factory=list)
+    """`--fake-embedding` 顺手建/复用的 Provider（默认路径为空，因此既有的打印输出不变）。"""
 
     def render(self) -> str:
         lines = [
@@ -118,6 +133,8 @@ class SeedReport:
             f"  workflows:       {', '.join(self.workflows) or '-'}",
             f"  agents:          {', '.join(self.agents) or '-'}",
         ]
+        if self.providers:
+            lines.append(f"  providers:       {', '.join(self.providers)}")
         if self.documents:
             lines.append(f"  documents:       {', '.join(self.documents)}")
         return "\n".join(lines)
@@ -434,6 +451,46 @@ async def _resolve_provider(session: AsyncSession, ref: str | None, *, role: str
     return fallback
 
 
+async def ensure_fake_embedding_provider(
+    session: AsyncSession,
+    settings: Settings,
+) -> tuple[ModelProvider, bool]:
+    """按 name 复用 / 创建"确定性 embedding"的 Provider（`--fake-embedding`；4.1.3 的闸门）。
+
+    存在的理由：`kind=openai_compatible` 的 Provider 可能**只有 Chat 模型**（DeepSeek 没有
+    `/embeddings`），而知识库必须绑一个 embedding Provider 才能建起来（4.6.1）。这里不假装上游有
+    embedding —— KB 行里落的就是 `fake-embedding` 这个模型名，界面上看得见。
+
+    返回 `(provider, created)`；`EMBED_ALLOW_FAKE` 没开就**当面报错**（退出码 2），不静默降级。
+    """
+    if not settings.embed_allow_fake:
+        raise ConfigInvalidError(
+            "Fake embedding provider requires EMBED_ALLOW_FAKE=true",
+            details={"setting": "EMBED_ALLOW_FAKE", "hint": "把 EMBED_ALLOW_FAKE 设成 true 后再执行"},
+        )
+    existing = (
+        await session.execute(select(ModelProvider).where(ModelProvider.name == FAKE_EMBEDDING_PROVIDER_NAME))
+    ).scalar_one_or_none()
+    if existing is not None:
+        return existing, False
+    # `model_construct` 绕过 `ProviderKind`（枚举里没有 `fake`，0.2.2 A 段）—— 与
+    # `tests/helpers.py::create_fake_provider` 同一手法：闸门在 `_validate_kind`，不在 schema。
+    payload = ProviderCreate.model_construct(
+        name=FAKE_EMBEDDING_PROVIDER_NAME,
+        kind="fake",  # type: ignore[arg-type]  # `ProviderKind` 里没有它（0.2.2 A 段），闸门在 `_validate_kind`
+        base_url="fake://",
+        api_key=None,
+        default_model=FAKE_EMBEDDING_MODEL,
+        models=[ModelEntry(name=FAKE_EMBEDDING_MODEL, input_price_per_1k_usd=0.0, output_price_per_1k_usd=0.0)],
+        default_params={},
+        headers={},
+        is_default=False,
+        status="enabled",
+    )
+    provider = await model_provider_service.create_provider(session, payload, settings=settings)
+    return provider, True
+
+
 async def _ensure_knowledge_base(
     session: AsyncSession,
     ref: str,
@@ -613,7 +670,13 @@ def _parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--workflow-dir", default=str(workflow_config.CONFIG_DIR), help="Workflow 配置目录")
     parser.add_argument("--provider", default=None, help="覆盖 YAML 里的 model.provider（name 或 id）")
     parser.add_argument("--model", default=None, help="覆盖 YAML 里的 model.name")
-    parser.add_argument("--embedding-provider", default=None, help="知识库用的 Provider（默认平台默认 Provider）")
+    embedding = parser.add_mutually_exclusive_group()
+    embedding.add_argument("--embedding-provider", default=None, help="知识库用的 Provider（默认平台默认 Provider）")
+    embedding.add_argument(
+        "--fake-embedding",
+        action="store_true",
+        help="知识库改用确定性 embedding（建/复用 kind=fake 的 Provider；需 EMBED_ALLOW_FAKE=true）",
+    )
     parser.add_argument(
         "--embedding-model",
         default=None,
@@ -639,6 +702,13 @@ async def _run(args: argparse.Namespace) -> int:
     docs_dir = Path(args.docs) if args.docs else None
     try:
         async with get_sessionmaker()() as session:
+            embedding_provider_ref = args.embedding_provider
+            providers: list[str] = []
+            if args.fake_embedding:
+                # 先把 embedding Provider 备好（幂等），再走同一套装载：知识库因此不必依赖上游 embedding
+                provider, created = await ensure_fake_embedding_provider(session, settings)
+                embedding_provider_ref = provider.name
+                providers.append(f"{'created' if created else 'reused'}:{provider.name}")
             report = await seed(
                 session,
                 settings,
@@ -646,11 +716,13 @@ async def _run(args: argparse.Namespace) -> int:
                 workflow_dir=Path(args.workflow_dir),
                 provider_ref=args.provider,
                 model_name=args.model,
-                embedding_provider_ref=args.embedding_provider,
+                embedding_provider_ref=embedding_provider_ref,
                 embedding_model=args.embedding_model,
                 docs_dir=docs_dir,
                 reset=bool(args.reset),
             )
+            # 只在 `--fake-embedding` 时非空：默认路径的打印输出与之前完全一致
+            report.providers = providers
     except AppError as exc:
         print(f"[seed] {exc.code}: {exc.message} {exc.details}", file=sys.stderr)  # noqa: T201
         return EXIT_CONFIG_ERROR

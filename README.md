@@ -74,6 +74,7 @@ docker compose -f docker/docker-compose.yml up --build   # 前端 http://localho
 .\scripts\demo.ps1                                          # 迁移 → 就绪检查 → seed_demo → 打印 8 步体验路径
 .\scripts\demo.ps1 -Docs -Reset                              # 干净重放，并把演示语料灌进知识库
 .\scripts\demo.ps1 -Provider my-provider -Model qwen-plus     # 指定 Provider / 模型
+.\scripts\demo.ps1 -Provider deepseek -Model deepseek-flash -FakeEmbedding   # 只有 Chat 模型时（见下）
 ```
 
 容器里等价于：
@@ -84,6 +85,11 @@ docker compose -f docker/docker-compose.yml exec api python -m app.scripts.seed_
 
 装载**幂等**（按 `name` upsert，`--reset` 先删同名再建）；Demo 数据只有 `seed_demo` 这一条通道
 （**没有** `0009_phase8_demo_agents` 迁移 —— 理由见《详细设计》8.1 的口径修正与附录 F v1.21）。
+
+> **Provider 只有 Chat 模型时（DeepSeek 没有 `/embeddings`）**：`-FakeEmbedding`（= `seed_demo --fake-embedding`）
+> 会按 name 幂等建一个 `kind=fake` 的 Provider（`fake-embedding`）**专供知识库**，KB 行里照实落
+> `embedding_model=fake-embedding`（不冒充真实模型）；**前提是先 `EMBED_ALLOW_FAKE=true`**，否则当面报错（退出码 2），
+> 不静默降级。它与 §9 那条已知限制是同一件事的两面。
 
 ### 2.4 打开界面，走 0.5.5 的 8 步（本机 5173 / 容器 8080）
 
@@ -313,7 +319,7 @@ Phase 8（MVP 收口：三个 Demo Agent + 装载脚本 + README/架构图 + `/s
 
 **验证情况（Phase 7：评测脚本链路 + 指标 / Trace 树，当时值）**：`pytest` **629 项**（625 passed + 4 skipped）、覆盖率 **89.89%**（`TOTAL 9462 957 90%`，门槛 `--cov-fail-under=70`）、`ruff check` / `ruff format --check .`（198 files）/ `mypy app`（124 source files）0 告警、`alembic check` 干净（`No new upgrade operations detected`；本阶段**无新增表**）、`python -m app.scripts.check_readyz` 通过（`ok=True revision 0005_phase5_knowledge_tables`）、`export_openapi` / `gen:api` 重导后与提交版本一致（`docs/openapi.json` **41 → 43 paths**，已随本轮提交）。新增用例 65 项（52 + 本轮 13）：`tests/unit/test_eval_assertions.py`（20）/ `test_eval_runner.py`（15）/ `test_eval_metrics.py`（8）/ `test_eval_judges.py`（5）+ `tests/integration/test_eval_contract_suite.py`（4）。契约套件的端到端证据（`test_eval_contract_suite.py`，真实 `create_app()` + lifespan + `FakeLLMProvider` + 内存向量库）：`configs/eval/contract-suite.yaml` 的 5 条启用用例全 `passed`（`task_success_rate=1.0`、`tool_success_rate=0.75`、`workflow_success_rate=null`、`avg_tool_calls=0.8`），5 条 `runs.kind=eval` 全 `succeeded` 且各自独立会话，4 行 `tool_invocations` 中 `task-4-tool-error-backfill` 那行 `failed` / `TOOL_EXECUTION_FAILED`（证明"工具失败回填给模型、Run 仍成功"），每个 Run 恰好 1 个 `retriever` span（`strategy=prefetch`、`hit_count>=1`、`output.chunk_ids` 非空 —— 预检索真的进了 system）；CLI 侧（真子进程跑 `python -m app.scripts.evaluate`）钉住 `--json` 只打 JSON、stdout 与落盘 `.json` 同源、失败用例退出码 = `failed + errors` 且带 `trace_id`、`--cases` 指定 `enabled: false` 的占位用例 → `CONFIG_INVALID` + 退出码 `2` 且不落半份报告。本轮（v1.20）的指标与 Trace 树侧：`tests/integration/test_stats_api.py`（4 项）钉住"真实 chat Run 的六项指标"（`FakeLLMProvider` 的 `cost_usd=0` 也照实断言，不假装有成本）与"造行后 `success_rate=0.5` / `error_rate=0.5` / 均值只算收敛行 / `tool_success_rate=0.5`"，空窗口返回 `null` 而不是 `0.0`，`?kind=` 可把评测批次排除；`tests/unit/test_trace_tree.py`（6 项）钉住建树的五条边界（孤儿 / 自环当根、兄弟按 `seq`、环丢弃、上限截断、1000 深链不撞递归上限）；`test_runs_and_traces_api.py`（+3 项）钉住 `run → agent → llm` 三层嵌套、未知 `trace_id` 的 404、spans 键集分页（`limit=2` → `next_cursor="2"` → 末页 `next_cursor=null`）与非法游标 422。
 
-**验证情况（Phase 8：MVP 收口，当前值 —— 按 v1.24 复跑更新）**：后端 `pytest` **659 项**（`655 passed, 4 skipped`，`addopts` 带 `-m "not live"`）、覆盖率 **90.07%**（`TOTAL 9582 951 90%`，门槛 `--cov-fail-under=70`）、`ruff check app tests configs` → `All checks passed!`、`ruff format --check .`（206 files）/ `mypy app`（126 source files）0 告警、`alembic check` → `No new upgrade operations detected`（本阶段**无新增表**）、`python -m app.scripts.check_readyz` → `ok=True revision 0005_phase5_knowledge_tables`；前端 `eslint` / `prettier --check` / `tsc --noEmit` 0 告警、`vitest` **62 项（13 个文件）**全绿、`vite build` 成功（6.36s，3078 modules，`dist/assets/index-QyoDinEb.js` 1,361.62 kB / gzip 426.85 kB）、`npm run gen:api` 后 `git diff --exit-code src/types/api.d.ts` **无 diff**（OpenAPI 与前端类型一致，CI 的 `gen-api` 门禁）。本轮新增后端 29 项（3 + 15 + 9 + 2）：`tests/e2e/test_demo_agents.py`（3：Chat 内联 Workflow / 工具循环 / 预检索 + 引用）、`tests/integration/test_seed_demo.py`（**15**：幂等装载、`--reset`、`--docs` 摄取、`name → id` 解析、配置错误退出码、坏配置文件带文件名、同名配置、per-Agent Provider、`--reset` 无悬空引用）、`tests/unit/test_agent_configs.py`（9：YAML → `AgentCreate` 映射）、`tests/unit/test_demo_genericity.py`（2：AST 扫描 + 反向自检）；前端新增 2 项（`DashboardPage.test.tsx`：六项指标渲染、空窗口显示 `-`），**本轮 v1.23 再补 13 项**，把 7.9「测试要求」点名的三个组件测试备齐：`src/hooks/useChatStream.test.ts`（8：事件分发 / `reset` / 权威 `content` / `run.failed` / HTTP 500 / `TypeError` / 并发闸门 / `stop()`）、`src/components/chat/MessageBubble.test.tsx`（5：角色标签与底色 / 元信息且缺省不留占位 / 流式光标 / `pre-wrap`），`TraceTree` 建树的 3 项 Phase 7 已有。三条链路的断言落点见 §6.4；`seed_demo` 的稳健性加固（配置错误收口 / Provider 按 Agent 解析 / `--reset` 不留悬空行）见《详细设计》附录 F v1.22；前端测试补齐与由此发现的「点停止被当失败」修复见附录 F v1.23；本轮（v1.24）的干净环境复核、流式错误体读取修复与新增用例见附录 F v1.24（同批还按复核结果订正了 §2.2 的环境变量名与本节数字口径）。
+**验证情况（Phase 8：MVP 收口，当前值 —— 按 v1.26 复跑更新）**：后端 `pytest` **669 项**（`665 passed, 4 skipped in 157.08s`，`0 failed / 0 error`，`addopts` 带 `-m "not live"`）、覆盖率 **90.27%**（`TOTAL 9628 937 90%`，门槛 `--cov-fail-under=70`；同一份代码连跑三次落在 **90.25%–90.38%**，未覆盖行 926–939 —— 波动集中在 `conversation_service` / `chat_service` 的少数分支，数字取当次实测值）、`ruff check app tests configs` → `All checks passed!`、`ruff format --check .`（206 files）/ `mypy app`（126 source files）0 告警、`alembic check` → `No new upgrade operations detected`（本阶段**无新增表**）、`python -m app.scripts.check_readyz` → `ok=True revision 0005_phase5_knowledge_tables`；前端 `eslint` / `prettier --check` / `tsc --noEmit` 0 告警、`vitest` **62 项（13 个文件）**全绿、`vite build` 成功（6.36s，3078 modules，`dist/assets/index-QyoDinEb.js` 1,361.62 kB / gzip 426.85 kB）、`npm run gen:api` 后 `git diff --exit-code src/types/api.d.ts` **无 diff**（OpenAPI 与前端类型一致，CI 的 `gen-api` 门禁）。本轮新增后端 29 项（3 + 15 + 9 + 2）：`tests/e2e/test_demo_agents.py`（3：Chat 内联 Workflow / 工具循环 / 预检索 + 引用）、`tests/integration/test_seed_demo.py`（**15**：幂等装载、`--reset`、`--docs` 摄取、`name → id` 解析、配置错误退出码、坏配置文件带文件名、同名配置、per-Agent Provider、`--reset` 无悬空引用）、`tests/unit/test_agent_configs.py`（9：YAML → `AgentCreate` 映射）、`tests/unit/test_demo_genericity.py`（2：AST 扫描 + 反向自检）；前端新增 2 项（`DashboardPage.test.tsx`：六项指标渲染、空窗口显示 `-`），**本轮 v1.23 再补 13 项**，把 7.9「测试要求」点名的三个组件测试备齐：`src/hooks/useChatStream.test.ts`（8：事件分发 / `reset` / 权威 `content` / `run.failed` / HTTP 500 / `TypeError` / 并发闸门 / `stop()`）、`src/components/chat/MessageBubble.test.tsx`（5：角色标签与底色 / 元信息且缺省不留占位 / 流式光标 / `pre-wrap`），`TraceTree` 建树的 3 项 Phase 7 已有。三条链路的断言落点见 §6.4；`seed_demo` 的稳健性加固（配置错误收口 / Provider 按 Agent 解析 / `--reset` 不留悬空行）见《详细设计》附录 F v1.22；前端测试补齐与由此发现的「点停止被当失败」修复见附录 F v1.23；本轮（v1.24）的干净环境复核、流式错误体读取修复与新增用例见附录 F v1.24（同批还按复核结果订正了 §2.2 的环境变量名与本节数字口径）；**本轮（v1.26）后端 +10 项**（`tests/unit/test_llm_openai_compatible.py` 7 项：思考模式 CoT 的解析 / 回传 / 不透传 UI、`thinking`+`reasoning_effort` 透传、`/embeddings` 缺失与其它 4xx 的区分、纯文本错误体；`test_error_mapping` 参数表 +1 例 = DeepSeek `402 Insufficient Balance`；`tests/integration/test_seed_demo.py` 2 项：`--fake-embedding` 建/复用 Provider + 闸门未开即报错），详见附录 F v1.26（同批订正了 §4.1.3 关于 `FakeEmbedder` 的旧口径：类名与向量维度）。
 
 **验证情况（Phase 0–3，基线）**：后端 `pytest` **509 项**（506 passed + 3 skipped）、覆盖率 **91%**（`TOTAL 6994 631 91%`）、`ruff check` / `ruff format --check` 0 告警、`mypy app` 通过、`alembic` 往返 + `alembic check`（`No new upgrade operations detected`）、就绪探针 `python -m app.scripts.check_readyz` 通过（`ok=True revision 0004_phase3_workflow_tables`）、`export_openapi` 幂等（连续两次同哈希）；前端 `eslint` / `prettier` / `tsc` / `vitest`（**28 项**）/ `vite build` 全绿。Phase 1/2 的回归用例全绿（无 Workflow 的 Agent 与 Chat 行为不变）；Phase 3 的端到端链路（真实 `create_app()` + lifespan + SQLite：建图 → 发布 → 202 运行 → 轮询 `node-runs` → resume/cancel/内联 Chat 流）见 `tests/integration/test_workflow_runner.py`。说明：`app/services/**` 与 `app/api/**` 的行覆盖率在本机 coverage 下会漏记"`await` 之后的尾行"（《详细设计》7.2 记录的口径），因此服务层另有直测补充（`tests/integration/test_workflow_runner.py` 直接断言落库结果与 `node_runs` 序列）。
 
@@ -504,6 +510,21 @@ cd ..\frontend; npm run gen:api
 - Workflow 的 `retriever` 节点自 Phase 5 起接真实检索（4.5.2 复用 `kb_service.retrieve`）：`kb_id` 必须是**已存在的知识库 id**（示例图里的 `kb_id: product-docs` 是占位，写库时由 Phase 8 的 `seed_demo` 解析成真实 id）；在那之前跑示例图会在该节点得到 `KB_NOT_FOUND` —— 节点默认 `on_error=continue`，错误文本写进 `output_key` 后继续后续节点，图的形状不变。
 - Workflow 运行**不返回 SSE**（3.4）：`POST /workflows/{id}/runs` 返回 202，页面按 2s 轮询 `node-runs`；SSE 只在 Chat 内联场景（`agent.workflow_id` 非空）里出现。
 - `python_execute` / `file_write` 默认关闭，需在 `Settings` 显式开启（SD-17）。
+- **只提供 Chat 接口的 Provider 没有 `/embeddings`**（DeepSeek 的官方接口只有 Chat，没有 embedding 模型）：
+  知识库要另配一个支持 embeddings 的 Provider（`/knowledge` 建 KB 时选它）；开发/演示环境可以在 `Settings` 里
+  打开 `EMBED_ALLOW_FAKE=true`，再用 `python -m app.scripts.seed_demo --fake-embedding`
+  （或 `.\scripts\demo.ps1 -FakeEmbedding`）幂等建一个 `kind=fake` 的 Provider。这条假通道是**确定性哈希向量**
+  （词元级 hashing trick + L2 归一化，默认 64 维 = `DEFAULT_FAKE_EMBEDDING_DIM`），只保证链路可跑通、近邻关系可断言
+  （共享词元越多越相似），**不具备语义检索能力**，真实问答必须换回真 embedding。
+  `fake` 也不能经 `POST /model-providers` 创建（`ProviderKind` 不含它，422），只有服务侧入口在闸门开启时接受
+  （4.1.2 第 9 条 / 4.1.3）。顺带如实记录上游的两种错误体：能力缺失时 `embed()` 报
+  `MODEL_BAD_REQUEST` + `details.hint`（给"另配 Provider"/"用 fake"两条出路）；`402 Insufficient Balance`
+  映射为 `MODEL_AUTH_FAILED` 且**不重试**；上游用纯文本回错误体时原话截断进 `details.upstream_message`。
+- **思考型模型（DeepSeek `thinking` 模式）的思维链不进 UI 流式通道**：CoT 走与 `content` 同级的
+  `reasoning_content`，只用于**回传给上游**（带 `tools` 的多轮对话必须回传）与 usage 兜底估算；`on_delta`
+  只推可见正文，所以页面上看不到"思考过程"，SSE 事件名单也没有变化（3.4）。`thinking` / `reasoning_effort`
+  按白名单**只在调用方显式给值时**透传（写进 Provider 的 `default_params` 或 Agent 的 `model_params`；
+  DeepSeek 默认开启、默认 `high`）。
 - Memory / MCP / 审批后台 / 评测平台为 Backlog：设计保留在文档中，但**不提供接口、不建空页面**（SD-14②）。
 
 ---

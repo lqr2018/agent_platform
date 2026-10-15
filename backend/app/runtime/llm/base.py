@@ -40,6 +40,12 @@ class ChatMessage:
     tool_calls: tuple[ToolCallSpec, ...] = ()
     tool_call_id: str | None = None
     name: str | None = None
+    reasoning_content: str = ""
+    """思考型模型（DeepSeek 的 thinking 模式）的思维链，**与 `content` 同级**（4.1.2 第 8 条）。
+
+    上游给了才有值。带 `tools` 的多轮对话必须把历史轮次的 CoT 回传给上游（见 `to_openai()`），
+    不带 `tools` 时上游会忽略它；对不支持该字段的 Provider 我们永不主动添加（空 = 不出现在报文里）。
+    """
 
     @staticmethod
     def system(content: str) -> ChatMessage:
@@ -50,16 +56,30 @@ class ChatMessage:
         return ChatMessage(role=MessageRole.USER, content=content)
 
     @staticmethod
-    def assistant(content: str = "", tool_calls: tuple[ToolCallSpec, ...] = ()) -> ChatMessage:
-        return ChatMessage(role=MessageRole.ASSISTANT, content=content, tool_calls=tool_calls)
+    def assistant(
+        content: str = "",
+        tool_calls: tuple[ToolCallSpec, ...] = (),
+        *,
+        reasoning_content: str = "",
+    ) -> ChatMessage:
+        return ChatMessage(
+            role=MessageRole.ASSISTANT,
+            content=content,
+            tool_calls=tool_calls,
+            reasoning_content=reasoning_content,
+        )
 
     @staticmethod
     def tool(content: str, *, tool_call_id: str, name: str | None = None) -> ChatMessage:
         return ChatMessage(role=MessageRole.TOOL, content=content, tool_call_id=tool_call_id, name=name)
 
     def to_openai(self) -> dict[str, Any]:
-        """OpenAI Chat Completions 的消息结构（4.1.2 第 1 条）。"""
+        """OpenAI Chat Completions 的消息结构（4.1.2 第 1 条 + 第 8 条）。"""
         payload: dict[str, Any] = {"role": str(self.role), "content": self.content}
+        if self.reasoning_content:
+            # 只有上游给过 CoT 时才回传：带 tools 的多轮对话上游要求回传，
+            # 不带 tools 时上游会忽略；其它 Provider 收不到这个非标字段（空值不下发）。
+            payload["reasoning_content"] = self.reasoning_content
         if self.tool_calls:
             payload["tool_calls"] = [
                 {

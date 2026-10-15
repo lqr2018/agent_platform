@@ -8,7 +8,11 @@
 4. `tools` 为空时不下发该字段；有工具时 `tool_choice="auto"`；
 5. 参数透传白名单（见 `PARAM_WHITELIST`）；
 6. token 优先取上游 `usage`，缺失则本地估算并标 `usage_estimated`；
-7. 成本按 `models[]` 价格估算，缺价格 → 0 且 `cost_estimated=false`（4.8.3）。
+7. 成本按 `models[]` 价格估算，缺价格 → 0 且 `cost_estimated=false`（4.8.3）；
+8. 思考型模型（DeepSeek 的 thinking 模式）：CoT 走与 `content` **同级**的 `reasoning_content`，
+   流式与非流式都解析出来；**带 `tools` 的多轮对话把历史 CoT 回传**（上游要求，见 `ChatMessage.to_openai()`），
+   `thinking` / `reasoning_effort` 按白名单透传（只透传调用方显式给的值）；
+9. 上游没有 `/embeddings`（DeepSeek 只有 Chat 接口）时给出**可照做**的诊断，而不是笼统的"检查模型名"。
 
 异常一律翻译为 `MODEL_*`（1.6 / 附录 A）；重试交给 `core/retry.py`，且**首 token 之后不再重试**（1.5.3）。
 """
@@ -57,8 +61,31 @@ PARAM_WHITELIST = (
     "presence_penalty",
     "frequency_penalty",
     "seed",
+    # DeepSeek 的思考模式开关与力度（OpenAI 格式：`thinking={"type": "enabled"}` + `reasoning_effort`）。
+    # 只在调用方（Provider 的 `default_params` 或 Agent 参数）显式给了值时才下发，
+    # 因此对不认识这两个字段的 Provider 零影响。
+    "thinking",
+    "reasoning_effort",
 )
 """4.1.2 第 5 条允许透传的采样参数。"""
+
+ENDPOINT_SUFFIXES = ("/chat/completions", "/embeddings")
+"""会被本类自行拼接的端点路径：`base_url` 里带了就先剥掉，避免拼成 `.../chat/completions/v1`。
+
+官方文档给的是完整路径（DeepSeek：`curl https://api.deepseek.com/chat/completions`），
+把文档里的整条地址粘进 Provider 表单是常见误操作。
+"""
+
+EMBEDDINGS_MISSING_HINTS = ("not found", "unsupported", "no such", "unknown url", "method not allowed")
+"""上游"没有这条路由"的常见说法（除 404/405 外，有些网关用 400 + 文本表达）。"""
+
+EMBEDDINGS_MISSING_MESSAGE = "Model provider does not expose an OpenAI-compatible /embeddings endpoint"
+
+EMBEDDINGS_HINT = (
+    "该 Provider 不提供 embeddings（DeepSeek 只有 Chat 接口）：知识库请另配一个支持 embeddings 的 Provider，"
+    "或在开发环境用 `python -m app.scripts.seed_demo --fake-embedding`（确定性向量，需 EMBED_ALLOW_FAKE=true）"
+)
+"""`embed()` 遇到"没有 /embeddings"时塞进 `details.hint` 的下一步动作。"""
 
 RETRYABLE_ERRORS: tuple[type[BaseException], ...] = (ModelRateLimitedError, ModelProviderUnavailableError)
 """1.5.3：只对 429 / 5xx / 连接错误重试。"""
@@ -67,11 +94,22 @@ CONTEXT_OVERFLOW_HINTS = ("context length", "context_length", "maximum context",
 
 
 def normalize_base_url(base_url: str) -> str:
-    """补 `/v1` 并去掉尾斜杠（4.1.2 第 2 条）。"""
+    """补 `/v1` 并去掉尾斜杠（4.1.2 第 2 条）。
+
+    先把调用方粘进来的**完整端点路径**剥掉（见 `ENDPOINT_SUFFIXES`），再补 `/v1`：
+    `https://api.deepseek.com/chat/completions` → `https://api.deepseek.com/v1`。
+    """
     url = (base_url or "").strip().rstrip("/")
     if not url:
         return url
-    return url if url.endswith("/v1") else f"{url}/v1"
+    lowered = url.lower()
+    for suffix in ENDPOINT_SUFFIXES:
+        if lowered.endswith(suffix):
+            url = url[: -len(suffix)].rstrip("/")
+            break
+    if not url:
+        return url
+    return url if url.lower().endswith("/v1") else f"{url}/v1"
 
 
 class OpenAICompatibleProvider:
@@ -158,9 +196,23 @@ class OpenAICompatibleProvider:
         )
 
     async def embed(self, texts: list[str], *, model: str) -> list[list[float]]:
-        """`POST /embeddings`（Phase 5 的 RAG 使用；Phase 1 只保证协议可用）。"""
-        data = await self._post("/embeddings", {"model": model, "input": texts})
+        """`POST /embeddings`（4.1.2 第 9 条：上游没这条路由时给出能照做的诊断）。"""
+        try:
+            data = await self._post("/embeddings", {"model": model, "input": texts})
+        except ModelBadRequestError as exc:
+            raise self._embeddings_error(exc) from exc
         return [list(item.get("embedding") or []) for item in (data.get("data") or [])]
+
+    def _embeddings_error(self, exc: ModelBadRequestError) -> ModelBadRequestError:
+        """把"上游没有 `/embeddings`"换成带 `hint` 的报错（DeepSeek 即属此类）；其余 4xx 原样返回。"""
+        status = exc.details.get("upstream_status")
+        upstream = str(exc.details.get("upstream_message") or "").lower()
+        if status in (404, 405) or any(hint in upstream for hint in EMBEDDINGS_MISSING_HINTS):
+            return ModelBadRequestError(
+                EMBEDDINGS_MISSING_MESSAGE,
+                details={**exc.details, "hint": EMBEDDINGS_HINT},
+            )
+        return exc
 
     # ---- 内部：非流式 / 流式 ----
     async def _chat_once(
@@ -181,14 +233,16 @@ class OpenAICompatibleProvider:
         choice = choices[0] if choices else {}
         raw_message = choice.get("message") or {}
         content = raw_message.get("content") or ""
+        # 4.1.2 第 8 条：思考型模型的 CoT 与 content 同级（`message.reasoning_content`）
+        reasoning = str(raw_message.get("reasoning_content") or "")
         tool_calls = tuple(self._parse_tool_calls(raw_message.get("tool_calls") or []))
         for call in tool_calls:
             if on_tool_call is not None:
                 await on_tool_call(call)
-        usage, usage_estimated = self._resolve_usage(data.get("usage"), messages, content)
+        usage, usage_estimated = self._resolve_usage(data.get("usage"), messages, content + reasoning)
         return self._result(
             model=model,
-            message=ChatMessage.assistant(content, tool_calls),
+            message=ChatMessage.assistant(content, tool_calls, reasoning_content=reasoning),
             finish_reason=str(choice.get("finish_reason") or "stop"),
             usage=usage,
             usage_estimated=usage_estimated,
@@ -210,6 +264,7 @@ class OpenAICompatibleProvider:
         payload = self._payload(messages, model=model, tools=tools, params=params, stream=True)
         started = perf_counter()
         content = ""
+        reasoning = ""
         finish_reason = "stop"
         usage: TokenUsage | None = None
         accumulated: dict[int, dict[str, str]] = {}
@@ -229,6 +284,11 @@ class OpenAICompatibleProvider:
                     continue
                 choice = choices[0]
                 delta = choice.get("delta") or {}
+                # 4.1.2 第 8 条：CoT 分片累积进消息（供带 tools 的多轮回传），
+                # **不**经过 `on_delta` —— 那是给客户端的"可见正文"通道。
+                reasoning_piece = delta.get("reasoning_content")
+                if reasoning_piece:
+                    reasoning += str(reasoning_piece)
                 piece = delta.get("content")
                 if piece:
                     content += piece
@@ -246,10 +306,10 @@ class OpenAICompatibleProvider:
         for call in tool_calls:
             if on_tool_call is not None:
                 await on_tool_call(call)
-        resolved_usage, usage_estimated = self._resolve_usage(usage, messages, content)
+        resolved_usage, usage_estimated = self._resolve_usage(usage, messages, content + reasoning)
         return self._result(
             model=model,
-            message=ChatMessage.assistant(content, tool_calls),
+            message=ChatMessage.assistant(content, tool_calls, reasoning_content=reasoning),
             finish_reason=finish_reason,
             usage=resolved_usage,
             usage_estimated=usage_estimated,
@@ -439,9 +499,17 @@ class OpenAICompatibleProvider:
             body = response.json()
         except (ValueError, httpx.HTTPError):
             body = {}
-        message = _extract_error_message(body) or f"upstream returned HTTP {status}"
+        # DeepSeek 的网关（governor）在鉴权失败时回的是**纯文本**（"Authentication Fails (governor)"）：
+        # 只认 JSON 会把上游的原话丢掉，排障时分不清是 key 错还是余额不足。
+        message = _extract_error_message(body) or _plain_text_body(response) or f"upstream returned HTTP {status}"
         details = {"provider": self.config.name, "upstream_status": status, "upstream_message": message}
         lowered = message.lower()
+        if status == 402:
+            # DeepSeek 402 - Insufficient Balance：账户没钱，重试与改参数都无用
+            raise ModelAuthFailedError(
+                "Model provider rejected the request: insufficient balance. Top up the account or switch provider",
+                details=details,
+            )
         if status in (401, 403):
             raise ModelAuthFailedError(
                 "Model provider rejected the credentials. Check the provider api_key.", details=details
@@ -455,6 +523,21 @@ class OpenAICompatibleProvider:
         raise ModelBadRequestError(
             "Model provider rejected the request. Check model name and parameters.", details=details
         )
+
+
+MAX_UPSTREAM_MESSAGE_CHARS = 300
+"""`details.upstream_message` 的长度上限（上游可能回一整页 HTML）。"""
+
+
+def _plain_text_body(response: httpx.Response) -> str:
+    """非 JSON 错误体的可读文本（压平空白 + 截断）；读不出来就返回空串。"""
+    try:
+        text = " ".join(response.text.split())
+    except (UnicodeDecodeError, ValueError):
+        return ""
+    if len(text) > MAX_UPSTREAM_MESSAGE_CHARS:
+        return f"{text[:MAX_UPSTREAM_MESSAGE_CHARS]}…"
+    return text
 
 
 def _extract_error_message(body: Any) -> str:

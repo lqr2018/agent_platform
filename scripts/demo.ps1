@@ -8,7 +8,8 @@
   1) `alembic upgrade head` —— 迁移没到 head 时后端会拒绝启动（6.3）；
   2) `python -m app.scripts.check_readyz` —— 连库 + 可写 + 迁移在 head；
   3) `python -m app.scripts.seed_demo` —— 把 `configs/agents/*.yaml` 与 `configs/workflows/*.yaml`
-     幂等装载成知识库 / Workflow / Agent；`-Docs` 再灌一遍演示语料；
+     幂等装载成知识库 / Workflow / Agent；`-Docs` 再灌一遍演示语料；`-FakeEmbedding`（= 脚本的
+     `--fake-embedding`）让知识库改用确定性 embedding —— Provider 只有 Chat 模型时（如 DeepSeek）也能建档；
   4) 探测后端 `/healthz`；可达则提示先 `.\scripts\dev.ps1`（或容器方式），最后打印 8 步体验路径。
 
   Demo 数据**只有这一条装载通道**：没有 `0009_phase8_demo_agents` 迁移 —— Demo 是内容不是 schema
@@ -18,11 +19,13 @@
   .\scripts\demo.ps1                 # 装载三个 Demo + 打印体验路径
   .\scripts\demo.ps1 -Docs -Reset     # 从干净状态重放，并把演示语料灌进知识库
   .\scripts\demo.ps1 -Provider my-provider -Model qwen-plus
+  .\scripts\demo.ps1 -Provider deepseek -Model deepseek-flash -FakeEmbedding
 #>
 param(
   [string]$Provider,
   [string]$Model,
   [string]$EmbeddingProvider,
+  [switch]$FakeEmbedding,
   [switch]$Docs,
   [switch]$Reset,
   [string]$BaseUrl = "http://localhost:8000",
@@ -55,6 +58,7 @@ $seedArgs = @("-m", "app.scripts.seed_demo")
 if ($Provider) { $seedArgs += @("--provider", $Provider) }
 if ($Model) { $seedArgs += @("--model", $Model) }
 if ($EmbeddingProvider) { $seedArgs += @("--embedding-provider", $EmbeddingProvider) }
+if ($FakeEmbedding) { $seedArgs += "--fake-embedding" }
 if ($Reset) { $seedArgs += "--reset" }
 if ($Docs) { $seedArgs += "--docs" }
 
@@ -67,7 +71,8 @@ if ($seedExit -eq 2) {
   Write-Host "[demo] 装载中止（退出码 2 = 环境/配置问题）。常见原因：" -ForegroundColor Yellow
   Write-Host "  - 库里还没有 `model_providers`：先在 /models 建一个 Provider，或用 -Provider 指定已存在的名字；"
   Write-Host "  - 工具名写错：内置工具由代码同步，先 `python -m app.scripts.seed_demo` 跑一遍看报错里的工具名；"
-  Write-Host "  - embedding 不可用：知识库需要 provider 支持 embedding（4.6.1）。"
+  Write-Host "  - embedding 不可用：知识库需要 provider 支持 embedding（4.6.1）；" -ForegroundColor Yellow
+  Write-Host "    只有 Chat 模型的 Provider（如 DeepSeek 无 /embeddings）请加 -FakeEmbedding（需 EMBED_ALLOW_FAKE=true）。"
 }
 if ($seedExit -ne 0) { exit $seedExit }
 

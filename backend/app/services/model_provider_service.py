@@ -236,12 +236,22 @@ async def ensure_default_provider(session: AsyncSession) -> ModelProvider | None
 
 
 def _validate_kind(kind: object, *, settings: Settings) -> None:
-    """`fake` 仅测试环境可写；其余取值由 `ProviderKind` 约束（0.2.2 的 A 段）。"""
-    if str(kind) in TEST_ONLY_KINDS and settings.app_env != "test":
+    """`fake` 只在测试环境或显式开启 `EMBED_ALLOW_FAKE` 时可写（0.2.2 A 段 / 4.1.3）。
+
+    经 HTTP 创建依旧被 `ProviderKind` 拦住（枚举里没有 `fake`）；这里放宽的是**服务侧**入口：
+    `python -m app.scripts.seed_demo --fake-embedding` 靠它在"只有 Chat 模型"的 Provider
+    （典型是 DeepSeek，无 `/embeddings`）下也能把知识库链路跑通。
+    """
+    if str(kind) in TEST_ONLY_KINDS and not _fake_allowed(settings):
         raise ValidationError(
-            f"Provider kind '{kind}' is only available when APP_ENV=test",
-            details={"kind": str(kind), "app_env": settings.app_env},
+            f"Provider kind '{kind}' is only available when APP_ENV=test or EMBED_ALLOW_FAKE=true",
+            details={"kind": str(kind), "app_env": settings.app_env, "setting": "EMBED_ALLOW_FAKE"},
         )
+
+
+def _fake_allowed(settings: Settings) -> bool:
+    """测试替身 Provider 的闸门（与 `runtime/rag/embedders.py` 的 `allow_fake` 同一条件）。"""
+    return settings.app_env == "test" or settings.embed_allow_fake
 
 
 async def _clear_other_defaults(session: AsyncSession, *, keep_id: str) -> None:
